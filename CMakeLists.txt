@@ -4,9 +4,9 @@ project(night_sky C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -g")
 
-# Find GTK3
+# Find GTK4
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+pkg_check_modules(GTK4 REQUIRED gtk4)
 
 # Find libnova
 # libnova might not have a proper cmake module or pkg-config in some envs,
@@ -21,8 +21,8 @@ pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 find_path(LIBNOVA_INCLUDE_DIR NAMES libnova/libnova.h PATHS /usr/include /usr/local/include)
 find_library(LIBNOVA_LIBRARY NAMES nova PATHS /usr/lib /usr/local/lib)
 
-include_directories(${GTK3_INCLUDE_DIRS} ${LIBNOVA_INCLUDE_DIR})
-link_directories(${GTK3_LIBRARY_DIRS})
+include_directories(${GTK4_INCLUDE_DIRS} ${LIBNOVA_INCLUDE_DIR})
+link_directories(${GTK4_LIBRARY_DIRS})
 
 add_executable(night_sky
     main.c
@@ -32,7 +32,7 @@ add_executable(night_sky
 )
 
 target_link_libraries(night_sky
-    ${GTK3_LIBRARIES}
+    ${GTK4_LIBRARIES}
     ${LIBNOVA_LIBRARY}
     m
 )
