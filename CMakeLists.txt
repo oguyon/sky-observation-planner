@@ -9,16 +9,16 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4 REQUIRED gtk4)
 
 # Find libnova
-# libnova might not have a proper cmake module or pkg-config in some envs,
-# so we might need to handle it manually if pkg_check_modules fails.
-# But based on previous steps, pkg-config knows about it, or at least we know paths.
-# Previous Makefile used: `pkg-config --cflags gtk+-3.0` -I/usr/include/libnova
-# And libs: -lnova -lm
-# The user environment had issues with `pkg-config --list-all | grep nova` returning nothing for pkg-config,
-# but found headers in /usr/include/libnova and lib in /usr/lib.
+# Search for libnova.h inside 'libnova' subdirectory
+find_path(LIBNOVA_INCLUDE_PATH NAMES libnova.h PATH_SUFFIXES libnova PATHS /usr/include /usr/local/include)
 
-# So we will search for the library and include path manually if pkg-config fails or just do it manually.
-find_path(LIBNOVA_INCLUDE_DIR NAMES libnova/libnova.h PATHS /usr/include /usr/local/include)
+if (LIBNOVA_INCLUDE_PATH)
+    # If found in /usr/include/libnova, we want /usr/include because source uses <libnova/libnova.h>
+    get_filename_component(LIBNOVA_INCLUDE_DIR "${LIBNOVA_INCLUDE_PATH}/.." ABSOLUTE)
+else()
+    message(WARNING "libnova headers not found")
+endif()
+
 find_library(LIBNOVA_LIBRARY NAMES nova PATHS /usr/lib /usr/local/lib)
 
 include_directories(${GTK4_INCLUDE_DIRS} ${LIBNOVA_INCLUDE_DIR})
