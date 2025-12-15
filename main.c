@@ -11,21 +11,27 @@ typedef struct {
     const char *name;
     double lat;
     double lon;
+    double timezone_offset; // Hours from UTC (e.g. -10 for Hawaii)
 } Site;
 
 Site sites[] = {
-    {"Maunakea Observatories", 19.8207, -155.4681},
-    {"La Palma (Roque de los Muchachos)", 28.7636, -17.8947},
-    {"Paranal Observatory", -24.6275, -70.4044},
-    {"Las Campanas Observatory", -29.0146, -70.6926},
-    {"New York City", 40.7128, -74.0060},
-    {NULL, 0, 0}
+    {"Maunakea Observatories", 19.8207, -155.4681, -10.0},
+    {"La Palma (Roque de los Muchachos)", 28.7636, -17.8947, 0.0},
+    {"Paranal Observatory", -24.6275, -70.4044, -4.0},
+    {"Las Campanas Observatory", -29.0146, -70.6926, -4.0},
+    {"New York City", 40.7128, -74.0060, -5.0},
+    {NULL, 0, 0, 0}
 };
 
 // Global State
 Location loc = {19.8207, -155.4681}; // Default Maunakea
-DateTime dt = {2024, 1, 1, 22, 0, 0, -5}; // Default time
+DateTime dt = {2024, 1, 1, 0, 0, 0, -10.0}; // Default Date
 gboolean show_constellations = TRUE;
+
+static void update_all_views() {
+    sky_view_redraw();
+    elevation_view_redraw();
+}
 
 void on_sky_click(double alt, double az) {
     struct ln_lnlat_posn observer;
@@ -43,6 +49,12 @@ void on_sky_click(double alt, double az) {
     elevation_view_set_selected(equ.ra, equ.dec);
 }
 
+// Callback from elevation view
+static void on_time_selected_from_plot(DateTime new_dt) {
+    dt = new_dt;
+    update_all_views();
+}
+
 static void on_toggle_constellations(GtkCheckButton *source, gpointer user_data) {
     show_constellations = gtk_check_button_get_active(source);
     sky_view_redraw();
@@ -55,16 +67,25 @@ static void on_site_changed(GtkComboBoxText *combo, gpointer user_data) {
         if (index >= 0 && sites[index].name) {
             loc.lat = sites[index].lat;
             loc.lon = sites[index].lon;
-            sky_view_redraw();
-            elevation_view_redraw();
+            dt.timezone_offset = sites[index].timezone_offset;
+            update_all_views();
         }
     }
 }
 
-static void on_hour_changed(GtkSpinButton *spin_button, gpointer user_data) {
-    dt.hour = (int)gtk_spin_button_get_value(spin_button);
-    sky_view_redraw();
-    elevation_view_redraw();
+// Calendar day selected
+static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
+    GDateTime *date = gtk_calendar_get_date(calendar);
+    if (date) {
+        dt.year = g_date_time_get_year(date);
+        dt.month = g_date_time_get_month(date);
+        dt.day = g_date_time_get_day_of_month(date);
+        dt.hour = 0; // Midnight Local Time
+        dt.minute = 0;
+        dt.second = 0;
+        g_date_time_unref(date);
+        update_all_views();
+    }
 }
 
 static void activate(GtkApplication *app, gpointer user_data) {
@@ -95,12 +116,11 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     // Elevation Area (Top Half)
     GtkWidget *status_label = gtk_label_new("Hover over graph");
-    GtkWidget *elev_area = create_elevation_view(&loc, &dt, GTK_LABEL(status_label));
+    GtkWidget *elev_area = create_elevation_view(&loc, &dt, GTK_LABEL(status_label), on_time_selected_from_plot);
 
-    // Use VExpand to make it take available space
     gtk_widget_set_vexpand(elev_area, TRUE);
     gtk_widget_set_hexpand(elev_area, TRUE);
-    gtk_box_append(GTK_BOX(right_box), gtk_label_new("Elevation (17:00 - 07:00)"));
+    gtk_box_append(GTK_BOX(right_box), gtk_label_new("Elevation (Midnight +/- 8h)"));
     gtk_box_append(GTK_BOX(right_box), elev_area);
 
     // Controls Box (Bottom Half)
@@ -129,12 +149,18 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(combo_site, "changed", G_CALLBACK(on_site_changed), NULL);
     gtk_grid_attach(GTK_GRID(controls_grid), combo_site, 1, 0, 1, 1);
 
-    // Time Control
-    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Hour (UT-5):"), 0, 1, 1, 1);
-    GtkWidget *spin_hour = gtk_spin_button_new_with_range(0, 23, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin_hour), dt.hour);
-    g_signal_connect(spin_hour, "value-changed", G_CALLBACK(on_hour_changed), NULL);
-    gtk_grid_attach(GTK_GRID(controls_grid), spin_hour, 1, 1, 1, 1);
+    // Date Control (Calendar Popover)
+    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Date:"), 0, 1, 1, 1);
+    GtkWidget *cal_button = gtk_menu_button_new();
+    gtk_menu_button_set_label(GTK_MENU_BUTTON(cal_button), "Select Date");
+
+    GtkWidget *popover = gtk_popover_new();
+    GtkWidget *calendar = gtk_calendar_new();
+    g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), NULL);
+    gtk_popover_set_child(GTK_POPOVER(popover), calendar);
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(cal_button), popover);
+
+    gtk_grid_attach(GTK_GRID(controls_grid), cal_button, 1, 1, 1, 1);
 
     // Constellation Toggle
     GtkWidget *check_const = gtk_check_button_new_with_label("Show Constellations");
