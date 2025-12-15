@@ -60,16 +60,15 @@ static void on_toggle_constellations(GtkCheckButton *source, gpointer user_data)
     sky_view_redraw();
 }
 
-static void on_site_changed(GtkComboBoxText *combo, gpointer user_data) {
-    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(combo));
-    if (id) {
-        int index = atoi(id);
-        if (index >= 0 && sites[index].name) {
-            loc.lat = sites[index].lat;
-            loc.lon = sites[index].lon;
-            dt.timezone_offset = sites[index].timezone_offset;
-            update_all_views();
-        }
+static void on_site_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
+    GtkDropDown *dropdown = GTK_DROP_DOWN(object);
+    guint selected = gtk_drop_down_get_selected(dropdown);
+
+    if (selected != GTK_INVALID_LIST_POSITION && sites[selected].name) {
+        loc.lat = sites[selected].lat;
+        loc.lon = sites[selected].lon;
+        dt.timezone_offset = sites[selected].timezone_offset;
+        update_all_views();
     }
 }
 
@@ -145,15 +144,16 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     // Site Dropdown
     gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Site:"), 0, 0, 1, 1);
-    GtkWidget *combo_site = gtk_combo_box_text_new();
+
+    GtkStringList *site_list = gtk_string_list_new(NULL);
     for (int i = 0; sites[i].name != NULL; i++) {
-        char id[10];
-        sprintf(id, "%d", i);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo_site), id, sites[i].name);
+        gtk_string_list_append(site_list, sites[i].name);
     }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(combo_site), 0); // Default Maunakea
-    g_signal_connect(combo_site, "changed", G_CALLBACK(on_site_changed), NULL);
-    gtk_grid_attach(GTK_GRID(controls_grid), combo_site, 1, 0, 1, 1);
+
+    GtkWidget *dropdown_site = gtk_drop_down_new(G_LIST_MODEL(site_list), NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown_site), 0); // Default Maunakea
+    g_signal_connect(dropdown_site, "notify::selected", G_CALLBACK(on_site_changed), NULL);
+    gtk_grid_attach(GTK_GRID(controls_grid), dropdown_site, 1, 0, 1, 1);
 
     // Date Control (Calendar Popover)
     gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Date:"), 0, 1, 1, 1);
