@@ -5,6 +5,7 @@
 static Location *current_loc;
 static DateTime *current_dt;
 static GtkWidget *drawing_area;
+static GtkLabel *status_label = NULL;
 
 static int has_selection = 0;
 static double selected_ra = 0;
@@ -83,12 +84,55 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     }
 }
 
-GtkWidget *create_elevation_view(Location *loc, DateTime *dt) {
+static void on_motion(GtkEventControllerMotion *controller, double x, double y, gpointer user_data) {
+    if (!status_label || !drawing_area) return;
+
+    int width = gtk_widget_get_width(drawing_area);
+    int height = gtk_widget_get_height(drawing_area);
+    double margin = 40;
+    double graph_w = width - 2 * margin;
+    double graph_h = height - 2 * margin;
+
+    if (x < margin || x > width - margin || y < margin || y > height - margin) {
+        gtk_label_set_text(status_label, "Hover over graph");
+        return;
+    }
+
+    // Map X to Time
+    double time_ratio = (x - margin) / graph_w;
+    int duration_hours = 14;
+    int total_minutes = (int)(time_ratio * duration_hours * 60);
+
+    int start_hour = 17;
+    int hour = start_hour + total_minutes / 60;
+    int minute = total_minutes % 60;
+    if (hour >= 24) hour -= 24;
+
+    // Map Y to Elevation
+    // y = height/2.0 - (alt / 90.0) * (graph_h / 2.0)
+    // y - height/2.0 = - (alt / 90.0) * (graph_h / 2.0)
+    // (y - height/2.0) / (graph_h / 2.0) = - alt / 90.0
+    // alt = -90.0 * (y - height/2.0) / (graph_h / 2.0)
+
+    double alt = -90.0 * (y - height/2.0) / (graph_h / 2.0);
+
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "Time: %02d:%02d, Elevation: %.1f deg", hour, minute, alt);
+    gtk_label_set_text(status_label, buffer);
+}
+
+GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *label) {
     current_loc = loc;
     current_dt = dt;
+    status_label = label;
     drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(drawing_area, 400, 200);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing_area), on_draw, NULL, NULL);
+
+    GtkEventController *controller = gtk_event_controller_motion_new();
+    g_signal_connect(controller, "motion", G_CALLBACK(on_motion), NULL);
+    gtk_widget_add_controller(drawing_area, controller);
+
     return drawing_area;
 }
 

@@ -4,7 +4,7 @@
 #include <gtk/gtk.h>
 #include "sky_model.h"
 
-GtkWidget *create_elevation_view(Location *loc, DateTime *dt);
+GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *status_label);
 void elevation_view_set_selected(double ra, double dec);
 void elevation_view_redraw();
 

@@ -29,6 +29,11 @@ static void unproject(double x, double y, double *alt, double *az) {
     double angle = atan2(-x, -y);
     *az = angle * 180.0 / M_PI;
     if (*az < 0) *az += 360.0;
+
+    // Libnova uses South=0. We rotate projection by 180.
+    // So screen Az needs to be rotated back by 180 to match Libnova.
+    *az += 180.0;
+    if (*az >= 360.0) *az -= 360.0;
 }
 
 static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data) {
@@ -59,7 +64,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
         if (alt >= 0) {
             double x, y;
-            project(alt, az, &x, &y);
+            project(alt, az + 180.0, &x, &y);
             // Magnitude size
             double size = 2.0 - (stars[i].mag / 3.0);
             if (size < 0.5) size = 0.5;
@@ -85,7 +90,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
                     if (alt >= 0) {
                         double x, y;
-                        project(alt, az, &x, &y);
+                        project(alt, az + 180.0, &x, &y);
                         if (first) {
                             cairo_move_to(cr, cx + x * radius, cy + y * radius);
                             first = 0;
@@ -106,7 +111,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     get_sun_position(*current_loc, *current_dt, &s_alt, &s_az);
     if (s_alt >= 0) {
         double x, y;
-        project(s_alt, s_az, &x, &y);
+        project(s_alt, s_az + 180.0, &x, &y);
         cairo_set_source_rgb(cr, 1, 1, 0);
         cairo_arc(cr, cx + x * radius, cy + y * radius, 5, 0, 2 * M_PI);
         cairo_fill(cr);
@@ -117,7 +122,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     get_moon_position(*current_loc, *current_dt, &m_alt, &m_az);
     if (m_alt >= 0) {
         double x, y;
-        project(m_alt, m_az, &x, &y);
+        project(m_alt, m_az + 180.0, &x, &y);
         cairo_set_source_rgb(cr, 0.8, 0.8, 0.8);
         cairo_arc(cr, cx + x * radius, cy + y * radius, 4, 0, 2 * M_PI);
         cairo_fill(cr);
