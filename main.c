@@ -26,8 +26,8 @@ void on_sky_click(double alt, double az) {
     elevation_view_set_selected(equ.ra, equ.dec);
 }
 
-static void on_toggle_constellations(GtkToggleButton *source, gpointer user_data) {
-    show_constellations = gtk_toggle_button_get_active(source);
+static void on_toggle_constellations(GtkCheckButton *source, gpointer user_data) {
+    show_constellations = gtk_check_button_get_active(source);
     sky_view_redraw();
 }
 
