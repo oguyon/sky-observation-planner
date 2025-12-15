@@ -4,9 +4,7 @@
 #include <gtk/gtk.h>
 #include "sky_model.h"
 
-typedef void (*SelectionChangedCallback)(void *user_data);
-
-GtkWidget *sky_view_new(AppState *app, SelectionChangedCallback callback, void *callback_data);
-void sky_view_redraw(GtkWidget *widget);
+GtkWidget *create_sky_view(Location *loc, DateTime *dt, gboolean *show_constellations, void (*on_sky_click)(double alt, double az));
+void sky_view_redraw();
 
 #endif

@@ -2,42 +2,25 @@
 #define SKY_MODEL_H
 
 #include <libnova/libnova.h>
-#include <stdbool.h>
 
 typedef struct {
-    char name[32];
-    struct ln_equ_posn pos; // RA/Dec
-    double mag;
-    int constellation_id;
-} Star;
+    double lat;
+    double lon;
+} Location;
 
 typedef struct {
-    int id;
-    char name[32];
-    int star_indices[20]; // Indices into the stars array, -1 terminated pair list
-} Constellation;
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    double second;
+    double timezone_offset; // hours from UTC
+} DateTime;
 
-// Application State
-typedef struct {
-    struct ln_lnlat_posn observer_location; // Lat/Lon
-    struct ln_date date; // Current time
-
-    Star *stars;
-    int num_stars;
-
-    Constellation *constellations;
-    int num_constellations;
-
-    // Selection
-    bool has_selection;
-    struct ln_equ_posn selection_equ; // RA/Dec of selection
-    char selection_name[64];
-
-    // Settings
-    bool show_constellations;
-} AppState;
-
-void init_data(AppState *app);
-void free_data(AppState *app);
+void get_horizontal_coordinates(double ra, double dec, Location loc, DateTime dt, double *alt, double *az);
+void get_sun_position(Location loc, DateTime dt, double *alt, double *az);
+void get_moon_position(Location loc, DateTime dt, double *alt, double *az);
+double get_julian_day(DateTime dt);
 
 #endif

@@ -2,142 +2,78 @@
 #include <math.h>
 #include <stdio.h>
 
-static void on_draw(GtkDrawingArea *drawing_area, cairo_t *cr, int width, int height, gpointer data) {
-    AppState *app = (AppState *)data;
+static Location *current_loc;
+static DateTime *current_dt;
+static GtkWidget *drawing_area;
 
-    double w = width;
-    double h = height;
+static int has_selection = 0;
+static double selected_ra = 0;
+static double selected_dec = 0;
 
-    // Margins
-    double left_m = 50;
-    double bottom_m = 30;
-    double right_m = 20;
-    double top_m = 20;
-
-    double plot_w = w - left_m - right_m;
-    double plot_h = h - top_m - bottom_m;
+static void on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
+    guint width = gtk_widget_get_allocated_width(widget);
+    guint height = gtk_widget_get_allocated_height(widget);
 
     // Background
-    cairo_set_source_rgb(cr, 0.95, 0.95, 0.95);
-    cairo_rectangle(cr, 0, 0, w, h);
-    cairo_fill(cr);
+    cairo_set_source_rgb(cr, 0.9, 0.9, 0.9);
+    cairo_paint(cr);
 
     // Axes
+    double margin = 40;
+    double graph_w = width - 2 * margin;
+    double graph_h = height - 2 * margin;
+
     cairo_set_source_rgb(cr, 0, 0, 0);
-    cairo_set_line_width(cr, 2);
-    // Y Axis
-    cairo_move_to(cr, left_m, top_m);
-    cairo_line_to(cr, left_m, h - bottom_m);
-    // X Axis
-    cairo_move_to(cr, left_m, h - bottom_m);
-    cairo_line_to(cr, w - right_m, h - bottom_m);
+    cairo_set_line_width(cr, 1);
+
+    // Y Axis (Elevation -90 to 90)
+    cairo_move_to(cr, margin, margin);
+    cairo_line_to(cr, margin, height - margin);
     cairo_stroke(cr);
 
-    // Y Axis Labels (Elevation 0 to 90)
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-    cairo_set_font_size(cr, 10);
-    for (int alt = 0; alt <= 90; alt += 15) {
-        double y = h - bottom_m - (alt / 90.0) * plot_h;
-        cairo_move_to(cr, left_m - 5, y);
-        cairo_line_to(cr, left_m, y);
-        cairo_stroke(cr);
-
-        char buf[8];
-        sprintf(buf, "%d", alt);
-        cairo_move_to(cr, left_m - 25, y + 3);
-        cairo_show_text(cr, buf);
-    }
-
-    // X Axis Time Range
-    struct ln_date mid_date = app->date;
-    mid_date.hours = 0; mid_date.minutes = 0; mid_date.seconds = 0;
-
-    double JD_start, JD_end;
-
-    struct ln_date start_date = app->date;
-    start_date.hours = 18; start_date.minutes = 0; start_date.seconds = 0;
-    JD_start = ln_get_julian_day(&start_date);
-    if (app->date.hours < 12) JD_start -= 1.0;
-
-    JD_end = JD_start + 0.5; // +12 hours (0.5 days)
-
-    // Draw X labels (every 2 hours)
-    for (double jd = JD_start; jd <= JD_end; jd += 2.0/24.0) {
-        double x_fraction = (jd - JD_start) / (JD_end - JD_start);
-        double x = left_m + x_fraction * plot_w;
-
-        cairo_move_to(cr, x, h - bottom_m);
-        cairo_line_to(cr, x, h - bottom_m + 5);
-        cairo_stroke(cr);
-
-        struct ln_date d;
-        ln_get_date(jd, &d);
-        char buf[8];
-        sprintf(buf, "%02d:%02d", d.hours, d.minutes);
-        cairo_move_to(cr, x - 15, h - bottom_m + 15);
-        cairo_show_text(cr, buf);
-    }
-
-    // Plot Functions
-    double step = 10.0 / (24.0 * 60.0);
-
-    // 1. Sun (Yellow)
-    cairo_set_source_rgb(cr, 1.0, 0.8, 0.0);
-    cairo_set_line_width(cr, 2);
-    int first = 1;
-    for (double jd = JD_start; jd <= JD_end; jd += step) {
-        struct ln_hrz_posn sun_pos;
-        struct ln_equ_posn sun_equ;
-        ln_get_solar_equ_coords(jd, &sun_equ);
-        ln_get_hrz_from_equ(&sun_equ, &app->observer_location, jd, &sun_pos);
-
-        double x = left_m + ((jd - JD_start) / (JD_end - JD_start)) * plot_w;
-        double y = h - bottom_m - (sun_pos.alt / 90.0) * plot_h;
-
-        if (sun_pos.alt < 0) y = h - bottom_m;
-
-        if (first) {
-            cairo_move_to(cr, x, y);
-            first = 0;
-        } else {
-            cairo_line_to(cr, x, y);
-        }
-    }
+    // X Axis (Time 18:00 to 07:00)
+    cairo_move_to(cr, margin, height / 2.0); // 0 elevation line
+    cairo_line_to(cr, width - margin, height / 2.0);
     cairo_stroke(cr);
 
-    // 2. Moon (White/Grey)
-    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-    first = 1;
-    for (double jd = JD_start; jd <= JD_end; jd += step) {
-        struct ln_hrz_posn moon_pos;
-        struct ln_equ_posn moon_equ;
-        ln_get_lunar_equ_coords(jd, &moon_equ); // Accurate enough
-        ln_get_hrz_from_equ(&moon_equ, &app->observer_location, jd, &moon_pos);
+    // Plot Function
+    DateTime start_time = *current_dt;
+    start_time.hour = 17;
+    start_time.minute = 0;
+    start_time.second = 0;
 
-        double x = left_m + ((jd - JD_start) / (JD_end - JD_start)) * plot_w;
-        double y = h - bottom_m - (moon_pos.alt / 90.0) * plot_h;
-        if (moon_pos.alt < 0) y = h - bottom_m;
+    int duration_hours = 14;
 
-        if (first) {
-            cairo_move_to(cr, x, y);
-            first = 0;
-        } else {
-            cairo_line_to(cr, x, y);
-        }
-    }
-    cairo_stroke(cr);
+    for (int obj = 0; obj < 3; obj++) {
+        // 0: Sun, 1: Moon, 2: Selected
+        if (obj == 2 && !has_selection) continue;
 
-    // 3. Selection (Red)
-    if (app->has_selection) {
-        cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
-        first = 1;
-        for (double jd = JD_start; jd <= JD_end; jd += step) {
-            struct ln_hrz_posn sel_pos;
-            ln_get_hrz_from_equ(&app->selection_equ, &app->observer_location, jd, &sel_pos);
+        if (obj == 0) cairo_set_source_rgb(cr, 1, 0.8, 0); // Sun Yellow
+        else if (obj == 1) cairo_set_source_rgb(cr, 0.5, 0.5, 0.5); // Moon Grey
+        else cairo_set_source_rgb(cr, 1, 0, 0); // Selected Red
 
-            double x = left_m + ((jd - JD_start) / (JD_end - JD_start)) * plot_w;
-            double y = h - bottom_m - (sel_pos.alt / 90.0) * plot_h;
-            if (sel_pos.alt < 0) y = h - bottom_m;
+        int first = 1;
+        for (int m = 0; m <= duration_hours * 60; m += 10) {
+            DateTime t = start_time;
+            // Add minutes
+            int total_min = t.minute + m;
+            t.hour += total_min / 60;
+            t.minute = total_min % 60;
+            while (t.hour >= 24) {
+                t.hour -= 24;
+                t.day += 1;
+            }
+
+            double alt = 0, az = 0;
+            if (obj == 0) get_sun_position(*current_loc, t, &alt, &az);
+            else if (obj == 1) get_moon_position(*current_loc, t, &alt, &az);
+            else get_horizontal_coordinates(selected_ra, selected_dec, *current_loc, t, &alt, &az);
+
+            double x = margin + (double)m / (duration_hours * 60) * graph_w;
+            // 90 deg is top (margin), -90 is bottom (height - margin)
+            // y = center - (alt / 90) * (height/2 - margin)
+            // height/2 is 0 deg.
+            double y = height/2.0 - (alt / 90.0) * (graph_h / 2.0);
 
             if (first) {
                 cairo_move_to(cr, x, y);
@@ -147,30 +83,27 @@ static void on_draw(GtkDrawingArea *drawing_area, cairo_t *cr, int width, int he
             }
         }
         cairo_stroke(cr);
-
-        // Draw Legend for Selection
-        cairo_move_to(cr, left_m + 10, top_m + 15);
-        cairo_show_text(cr, app->selection_name);
     }
-
-    // Legend
-    cairo_set_font_size(cr, 10);
-    cairo_set_source_rgb(cr, 1.0, 0.8, 0.0);
-    cairo_move_to(cr, w - right_m - 40, top_m + 10);
-    cairo_show_text(cr, "Sun");
-
-    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-    cairo_move_to(cr, w - right_m - 40, top_m + 25);
-    cairo_show_text(cr, "Moon");
 }
 
-GtkWidget *elevation_view_new(AppState *app) {
-    GtkWidget *drawing_area = gtk_drawing_area_new();
+GtkWidget *create_elevation_view(Location *loc, DateTime *dt) {
+    current_loc = loc;
+    current_dt = dt;
+    drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(drawing_area, 400, 200);
-    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing_area), on_draw, app, NULL);
+    g_signal_connect(G_OBJECT(drawing_area), "draw", G_CALLBACK(on_draw), NULL);
     return drawing_area;
 }
 
-void elevation_view_redraw(GtkWidget *widget) {
-    gtk_widget_queue_draw(widget);
+void elevation_view_set_selected(double ra, double dec) {
+    selected_ra = ra;
+    selected_dec = dec;
+    has_selection = 1;
+    elevation_view_redraw();
+}
+
+void elevation_view_redraw() {
+    if (drawing_area) {
+        gtk_widget_queue_draw(drawing_area);
+    }
 }

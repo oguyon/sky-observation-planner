@@ -1,194 +1,185 @@
 #include "sky_view.h"
+#include "catalog.h"
 #include <math.h>
 
-static AppState *app_state;
-static SelectionChangedCallback on_selection_changed = NULL;
-static void *selection_changed_data = NULL;
+static Location *current_loc;
+static DateTime *current_dt;
+static gboolean *current_show_constellations;
+static GtkWidget *drawing_area;
+static void (*click_callback)(double, double) = NULL;
 
-static void hrz_to_screen(double alt, double az, double R, double *x, double *y) {
-    if (alt < 0) {
-        *x = -9999; *y = -9999;
-        return;
-    }
-    double r = R * (90.0 - alt) / 90.0;
-    double theta = (90.0 - az) * M_PI / 180.0;
+// Helper to project Alt/Az to X/Y (0-1 range from center)
+static void project(double alt, double az, double *x, double *y) {
+    double r = 1.0 - alt / 90.0;
+    if (r < 0) r = 0;
+    // Az in degrees. Convert to radians.
+    // Standard Math: 0 is Right (East), 90 is Up (North).
+    // Azimuth: 0 is North, 90 is East.
+    // Screen: Y is down.
+    // We want North (Az=0) to be Up (Y=-1).
+    // East (Az=90) to be Left (X=-1) or Right?
+    // Looking up at sky: North Up, East is LEFT. West is RIGHT.
+    // But usually sky maps have East on Left if you hold it overhead.
+    // Let's stick to standard:
+    // x = -r * sin(az) (East is Left)
+    // y = -r * cos(az) (North is Top)
 
-    *x = r * cos(theta);
-    *y = r * sin(theta);
+    double az_rad = az * M_PI / 180.0;
+    *x = -r * sin(az_rad);
+    *y = -r * cos(az_rad);
 }
 
-// Drawing callback for GtkDrawingArea in GTK4
-static void on_draw(GtkDrawingArea *drawing_area, cairo_t *cr, int width, int height, gpointer data) {
-    AppState *app = (AppState *)data;
+// Inverse projection for click
+static void unproject(double x, double y, double *alt, double *az) {
+    double r = sqrt(x*x + y*y);
+    if (r > 1.0) {
+        *alt = -1; // Invalid
+        return;
+    }
+    *alt = 90.0 * (1.0 - r);
 
-    double w = width;
-    double h = height;
-    double cx = w / 2.0;
-    double cy = h / 2.0;
-    double R = (w < h ? w : h) / 2.0 - 10; // Margin
+    // x = -r * sin(az) => sin(az) = -x/r
+    // y = -r * cos(az) => cos(az) = -y/r
+    double angle = atan2(-x, -y);
+    *az = angle * 180.0 / M_PI;
+    if (*az < 0) *az += 360.0;
+}
 
-    // Draw Background
-    cairo_set_source_rgb(cr, 0.0, 0.0, 0.2);
-    cairo_arc(cr, cx, cy, R, 0, 2 * M_PI);
-    cairo_fill(cr);
+static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
+    guint width = gtk_widget_get_allocated_width(widget);
+    guint height = gtk_widget_get_allocated_height(widget);
+    double radius = (width < height ? width : height) / 2.0 - 10;
+    double cx = width / 2.0;
+    double cy = height / 2.0;
 
-    // Draw Horizon
-    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-    cairo_set_line_width(cr, 2);
-    cairo_arc(cr, cx, cy, R, 0, 2 * M_PI);
+    // Background
+    cairo_set_source_rgb(cr, 0, 0, 0.1); // Dark blue/black
+    cairo_paint(cr);
+
+    // Horizon
+    cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
+    cairo_arc(cr, cx, cy, radius, 0, 2 * M_PI);
     cairo_stroke(cr);
 
-    // Cardinal Points
-    cairo_set_source_rgb(cr, 0.8, 0.8, 0.8);
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-    cairo_set_font_size(cr, 12);
+    // Directions
+    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
+    cairo_move_to(cr, cx, cy - radius); cairo_show_text(cr, "N");
+    cairo_move_to(cr, cx, cy + radius); cairo_show_text(cr, "S");
+    cairo_move_to(cr, cx - radius, cy); cairo_show_text(cr, "E");
+    cairo_move_to(cr, cx + radius, cy); cairo_show_text(cr, "W");
 
-    cairo_move_to(cr, cx - 5, cy - R + 15); cairo_show_text(cr, "N");
-    cairo_move_to(cr, cx - 5, cy + R - 5); cairo_show_text(cr, "S");
-    cairo_move_to(cr, cx + R - 15, cy + 5); cairo_show_text(cr, "W");
-    cairo_move_to(cr, cx - R + 5, cy + 5); cairo_show_text(cr, "E");
+    // Draw Stars
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    for (int i = 0; i < num_stars; i++) {
+        double alt, az;
+        get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
+        if (alt >= 0) {
+            double x, y;
+            project(alt, az, &x, &y);
+            // Magnitude size
+            double size = 2.0 - (stars[i].mag / 3.0);
+            if (size < 0.5) size = 0.5;
 
-    // Calculate Star Positions
-    struct ln_hrz_posn *star_pos = malloc(sizeof(struct ln_hrz_posn) * app->num_stars);
-    double JD = ln_get_julian_day(&app->date);
-
-    for (int i = 0; i < app->num_stars; i++) {
-        ln_get_hrz_from_equ(&app->stars[i].pos, &app->observer_location, JD, &star_pos[i]);
+            cairo_arc(cr, cx + x * radius, cy + y * radius, size, 0, 2 * M_PI);
+            cairo_fill(cr);
+        }
     }
 
     // Draw Constellations
-    if (app->show_constellations) {
-        cairo_set_source_rgb(cr, 0.4, 0.6, 0.8);
-        cairo_set_line_width(cr, 1);
-        for (int i = 0; i < app->num_constellations; i++) {
-            int *idx = app->constellations[i].star_indices;
-            while (*idx != -1) {
-                int i1 = *idx;
-                int i2 = *(idx+1);
-                idx += 2;
+    if (*current_show_constellations) {
+        cairo_set_source_rgba(cr, 0.5, 0.5, 0.8, 0.5);
+        cairo_set_line_width(cr, 1.0);
+        for (int i = 0; i < num_constellations; i++) {
+            for(int j=0; j<constellations[i].num_lines; j++) {
+                int len = constellations[i].line_lengths[j];
+                int first = 1;
+                for (int k=0; k<len; k++) {
+                    double ra = constellations[i].lines[j][k*2];
+                    double dec = constellations[i].lines[j][k*2+1];
+                    double alt, az;
+                    get_horizontal_coordinates(ra, dec, *current_loc, *current_dt, &alt, &az);
 
-                if (star_pos[i1].alt > 0 && star_pos[i2].alt > 0) {
-                    double x1, y1, x2, y2;
-                    hrz_to_screen(star_pos[i1].alt, star_pos[i1].az, R, &x1, &y1);
-                    hrz_to_screen(star_pos[i2].alt, star_pos[i2].az, R, &x2, &y2);
-
-                    cairo_move_to(cr, cx + x1, cy + y1);
-                    cairo_line_to(cr, cx + x2, cy + y2);
-                    cairo_stroke(cr);
+                    if (alt >= 0) {
+                        double x, y;
+                        project(alt, az, &x, &y);
+                        if (first) {
+                            cairo_move_to(cr, cx + x * radius, cy + y * radius);
+                            first = 0;
+                        } else {
+                            cairo_line_to(cr, cx + x * radius, cy + y * radius);
+                        }
+                    } else {
+                        first = 1; // Break line if goes below horizon
+                    }
                 }
-            }
-        }
-    }
-
-    // Draw Stars
-    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-    for (int i = 0; i < app->num_stars; i++) {
-        if (star_pos[i].alt > 0) {
-            double x, y;
-            hrz_to_screen(star_pos[i].alt, star_pos[i].az, R, &x, &y);
-
-            double size = 3.0 - 0.5 * app->stars[i].mag;
-            if (size < 1) size = 1;
-
-            cairo_arc(cr, cx + x, cy + y, size, 0, 2 * M_PI);
-            cairo_fill(cr);
-
-             if (app->has_selection && strcmp(app->selection_name, app->stars[i].name) == 0) {
-                cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
-                cairo_arc(cr, cx + x, cy + y, size + 2, 0, 2 * M_PI);
                 cairo_stroke(cr);
-                cairo_set_source_rgb(cr, 1.0, 1.0, 1.0); // Reset
             }
         }
     }
 
-    free(star_pos);
+    // Draw Sun
+    double s_alt, s_az;
+    get_sun_position(*current_loc, *current_dt, &s_alt, &s_az);
+    if (s_alt >= 0) {
+        double x, y;
+        project(s_alt, s_az, &x, &y);
+        cairo_set_source_rgb(cr, 1, 1, 0);
+        cairo_arc(cr, cx + x * radius, cy + y * radius, 5, 0, 2 * M_PI);
+        cairo_fill(cr);
+    }
+
+    // Draw Moon
+    double m_alt, m_az;
+    get_moon_position(*current_loc, *current_dt, &m_alt, &m_az);
+    if (m_alt >= 0) {
+        double x, y;
+        project(m_alt, m_az, &x, &y);
+        cairo_set_source_rgb(cr, 0.8, 0.8, 0.8);
+        cairo_arc(cr, cx + x * radius, cy + y * radius, 4, 0, 2 * M_PI);
+        cairo_fill(cr);
+    }
+
+    return FALSE;
 }
 
-// In GTK4, use GtkGestureClick for clicks
-static void on_click(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
-    AppState *app = (AppState *)data;
-    GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+    if (click_callback) {
+        guint width = gtk_widget_get_allocated_width(widget);
+        guint height = gtk_widget_get_allocated_height(widget);
+        double radius = (width < height ? width : height) / 2.0 - 10;
+        double cx = width / 2.0;
+        double cy = height / 2.0;
 
-    int w = gtk_widget_get_width(widget);
-    int h = gtk_widget_get_height(widget);
-    double cx = w / 2.0;
-    double cy = h / 2.0;
-    double R = (w < h ? w : h) / 2.0 - 10;
+        double x = (event->x - cx) / radius;
+        double y = (event->y - cy) / radius;
 
-    double mx = x - cx;
-    double my = y - cy;
-    double r_click = sqrt(mx*mx + my*my);
-
-    if (r_click > R) return;
-
-    double alt = 90.0 - 90.0 * r_click / R;
-    double theta = atan2(my, mx);
-    double theta_deg = theta * 180.0 / M_PI;
-    double az = 90.0 - theta_deg;
-    if (az < 0) az += 360.0;
-    if (az >= 360) az -= 360.0;
-
-    struct ln_hrz_posn hrz = {az, alt};
-    struct ln_equ_posn equ;
-    double JD = ln_get_julian_day(&app->date);
-
-    ln_get_equ_from_hrz(&hrz, &app->observer_location, JD, &equ);
-
-    app->has_selection = true;
-    app->selection_equ = equ;
-
-    double min_dist = 2.0;
-    int closest = -1;
-
-    for (int i = 0; i < app->num_stars; i++) {
-        struct ln_hrz_posn pos;
-        ln_get_hrz_from_equ(&app->stars[i].pos, &app->observer_location, JD, &pos);
-        if (pos.alt > 0) {
-            double d_alt = pos.alt - alt;
-            double d_az = pos.az - az;
-            if (d_az > 180) d_az -= 360;
-            if (d_az < -180) d_az += 360;
-
-            double dist = sqrt(d_alt*d_alt + d_az*d_az);
-            if (dist < min_dist) {
-                min_dist = dist;
-                closest = i;
-            }
+        double alt, az;
+        unproject(x, y, &alt, &az);
+        if (alt >= 0) {
+            click_callback(alt, az);
         }
     }
-
-    if (closest != -1) {
-        strcpy(app->selection_name, app->stars[closest].name);
-        app->selection_equ = app->stars[closest].pos;
-    } else {
-        sprintf(app->selection_name, "Sky Point");
-    }
-
-    gtk_widget_queue_draw(widget);
-
-    if (on_selection_changed) {
-        on_selection_changed(selection_changed_data);
-    }
+    return TRUE;
 }
 
-GtkWidget *sky_view_new(AppState *app, SelectionChangedCallback callback, void *callback_data) {
-    app_state = app;
-    on_selection_changed = callback;
-    selection_changed_data = callback_data;
+GtkWidget *create_sky_view(Location *loc, DateTime *dt, gboolean *show_constellations, void (*on_sky_click)(double, double)) {
+    current_loc = loc;
+    current_dt = dt;
+    current_show_constellations = show_constellations;
+    click_callback = on_sky_click;
 
-    GtkWidget *drawing_area = gtk_drawing_area_new();
+    drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(drawing_area, 400, 400);
+    g_signal_connect(G_OBJECT(drawing_area), "draw", G_CALLBACK(on_draw), NULL);
 
-    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing_area), on_draw, app, NULL);
-
-    GtkGesture *gesture = gtk_gesture_click_new();
-    g_signal_connect(gesture, "pressed", G_CALLBACK(on_click), app);
-    gtk_widget_add_controller(drawing_area, GTK_EVENT_CONTROLLER(gesture));
+    gtk_widget_add_events(drawing_area, GDK_BUTTON_PRESS_MASK);
+    g_signal_connect(G_OBJECT(drawing_area), "button-press-event", G_CALLBACK(on_button_press), NULL);
 
     return drawing_area;
 }
 
-void sky_view_redraw(GtkWidget *widget) {
-    gtk_widget_queue_draw(widget);
+void sky_view_redraw() {
+    if (drawing_area) {
+        gtk_widget_queue_draw(drawing_area);
+    }
 }

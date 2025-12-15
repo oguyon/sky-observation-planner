@@ -1,143 +1,119 @@
 #include <gtk/gtk.h>
-#include <libnova/libnova.h>
+#include <stdlib.h>
+#include "catalog.h"
 #include "sky_model.h"
 #include "sky_view.h"
 #include "elevation_view.h"
 
-static AppState app_state;
-static GtkWidget *sky_widget;
-static GtkWidget *elevation_widget;
+// Global State
+Location loc = {40.7128, -74.0060}; // NYC default
+DateTime dt = {2024, 1, 1, 22, 0, 0, -5}; // Default time
+gboolean show_constellations = TRUE;
 
-static void on_constellation_toggled(GtkToggleButton *button, gpointer user_data) {
-    app_state.show_constellations = gtk_check_button_get_active(GTK_CHECK_BUTTON(button));
-    sky_view_redraw(sky_widget);
+void on_sky_click(double alt, double az) {
+    struct ln_lnlat_posn observer;
+    observer.lat = loc.lat;
+    observer.lng = loc.lon;
+
+    struct ln_hrz_posn hrz;
+    hrz.alt = alt;
+    hrz.az = az;
+
+    double JD = get_julian_day(dt);
+    struct ln_equ_posn equ;
+    ln_get_equ_from_hrz(&hrz, &observer, JD, &equ);
+
+    elevation_view_set_selected(equ.ra, equ.dec);
 }
 
-static void on_time_add_1h(GtkWidget *widget, gpointer user_data) {
-    double jd = ln_get_julian_day(&app_state.date);
-    jd += 1.0/24.0;
-    ln_get_date(jd, &app_state.date);
-    sky_view_redraw(sky_widget);
-    elevation_view_redraw(elevation_widget);
-}
-
-static void on_time_sub_1h(GtkWidget *widget, gpointer user_data) {
-    double jd = ln_get_julian_day(&app_state.date);
-    jd -= 1.0/24.0;
-    ln_get_date(jd, &app_state.date);
-    sky_view_redraw(sky_widget);
-    elevation_view_redraw(elevation_widget);
-}
-
-static void on_selection_changed(void *user_data) {
-    elevation_view_redraw(elevation_widget);
+static void on_toggle_constellations(GtkToggleButton *source, gpointer user_data) {
+    show_constellations = gtk_toggle_button_get_active(source);
+    sky_view_redraw();
 }
 
 static void on_lat_changed(GtkSpinButton *spin_button, gpointer user_data) {
-    app_state.observer_location.lat = gtk_spin_button_get_value(spin_button);
-    sky_view_redraw(sky_widget);
-    elevation_view_redraw(elevation_widget);
+    loc.lat = gtk_spin_button_get_value(spin_button);
+    sky_view_redraw();
+    elevation_view_redraw();
 }
 
 static void on_lon_changed(GtkSpinButton *spin_button, gpointer user_data) {
-    app_state.observer_location.lng = gtk_spin_button_get_value(spin_button);
-    sky_view_redraw(sky_widget);
-    elevation_view_redraw(elevation_widget);
+    loc.lon = gtk_spin_button_get_value(spin_button);
+    sky_view_redraw();
+    elevation_view_redraw();
 }
 
-static void activate(GtkApplication *app, gpointer user_data) {
-    GtkWidget *window;
-    GtkWidget *paned;
-    GtkWidget *frame_left, *frame_right;
-    GtkWidget *box_right;
-    GtkWidget *controls_box;
-    GtkWidget *location_box;
-    GtkWidget *btn_const;
-    GtkWidget *btn_time_p, *btn_time_m;
-    GtkWidget *spin_lat, *spin_lon;
-    GtkWidget *lbl_lat, *lbl_lon;
+static void on_hour_changed(GtkSpinButton *spin_button, gpointer user_data) {
+    dt.hour = (int)gtk_spin_button_get_value(spin_button);
+    sky_view_redraw();
+    elevation_view_redraw();
+}
 
-    init_data(&app_state);
+int main(int argc, char *argv[]) {
+    gtk_init(&argc, &argv);
 
-    window = gtk_application_window_new(app);
+    if (load_catalog() != 0) {
+        fprintf(stderr, "Failed to load catalog. Make sure stars.6.json and constellations.lines.json are present.\n");
+        return 1;
+    }
+
+    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), "Night Sky Tool");
     gtk_window_set_default_size(GTK_WINDOW(window), 1000, 600);
+    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
-    paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_window_set_child(GTK_WINDOW(window), paned);
+    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_container_add(GTK_CONTAINER(window), paned);
 
-    elevation_widget = elevation_view_new(&app_state);
+    // Left Panel: VBox with Controls + SkyView
+    GtkWidget *left_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_paned_add1(GTK_PANED(paned), left_box);
 
-    // Left Panel
-    frame_left = gtk_frame_new("Sky Map");
-    sky_widget = sky_view_new(&app_state, on_selection_changed, NULL);
-    gtk_frame_set_child(GTK_FRAME(frame_left), sky_widget);
-    gtk_paned_set_start_child(GTK_PANED(paned), frame_left);
-    gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+    // Controls
+    GtkWidget *controls_grid = gtk_grid_new();
+    gtk_box_pack_start(GTK_BOX(left_box), controls_grid, FALSE, FALSE, 5);
 
-    // Right Panel
-    frame_right = gtk_frame_new("Analysis");
-    box_right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_frame_set_child(GTK_FRAME(frame_right), box_right);
-
-    gtk_box_append(GTK_BOX(box_right), elevation_widget);
-
-    // Location Controls
-    location_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-
-    lbl_lat = gtk_label_new("Lat:");
-    gtk_box_append(GTK_BOX(location_box), lbl_lat);
-
-    spin_lat = gtk_spin_button_new_with_range(-90.0, 90.0, 1.0);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin_lat), app_state.observer_location.lat);
+    // Location
+    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Lat:"), 0, 0, 1, 1);
+    GtkWidget *spin_lat = gtk_spin_button_new_with_range(-90, 90, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin_lat), loc.lat);
     g_signal_connect(spin_lat, "value-changed", G_CALLBACK(on_lat_changed), NULL);
-    gtk_box_append(GTK_BOX(location_box), spin_lat);
+    gtk_grid_attach(GTK_GRID(controls_grid), spin_lat, 1, 0, 1, 1);
 
-    lbl_lon = gtk_label_new("Lon:");
-    gtk_box_append(GTK_BOX(location_box), lbl_lon);
-
-    spin_lon = gtk_spin_button_new_with_range(-180.0, 180.0, 1.0);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin_lon), app_state.observer_location.lng);
+    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Lon:"), 2, 0, 1, 1);
+    GtkWidget *spin_lon = gtk_spin_button_new_with_range(-180, 180, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin_lon), loc.lon);
     g_signal_connect(spin_lon, "value-changed", G_CALLBACK(on_lon_changed), NULL);
-    gtk_box_append(GTK_BOX(location_box), spin_lon);
+    gtk_grid_attach(GTK_GRID(controls_grid), spin_lon, 3, 0, 1, 1);
 
-    gtk_box_append(GTK_BOX(box_right), location_box);
+    // Time (Hour only for simplicity)
+    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Hour:"), 4, 0, 1, 1);
+    GtkWidget *spin_hour = gtk_spin_button_new_with_range(0, 23, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin_hour), dt.hour);
+    g_signal_connect(spin_hour, "value-changed", G_CALLBACK(on_hour_changed), NULL);
+    gtk_grid_attach(GTK_GRID(controls_grid), spin_hour, 5, 0, 1, 1);
 
-    // General Controls
-    controls_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    // Toggle
+    GtkWidget *check_const = gtk_check_button_new_with_label("Constellations");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check_const), show_constellations);
+    g_signal_connect(check_const, "toggled", G_CALLBACK(on_toggle_constellations), NULL);
+    gtk_grid_attach(GTK_GRID(controls_grid), check_const, 0, 1, 2, 1);
 
-    btn_const = gtk_check_button_new_with_label("Constellations");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(btn_const), TRUE);
-    g_signal_connect(btn_const, "toggled", G_CALLBACK(on_constellation_toggled), NULL);
-    gtk_box_append(GTK_BOX(controls_box), btn_const);
+    // Sky View
+    GtkWidget *sky_area = create_sky_view(&loc, &dt, &show_constellations, on_sky_click);
+    gtk_box_pack_start(GTK_BOX(left_box), sky_area, TRUE, TRUE, 0);
 
-    btn_time_m = gtk_button_new_with_label("-1h");
-    g_signal_connect(btn_time_m, "clicked", G_CALLBACK(on_time_sub_1h), NULL);
-    gtk_box_append(GTK_BOX(controls_box), btn_time_m);
+    // Right Panel: Elevation Graph
+    GtkWidget *right_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_paned_add2(GTK_PANED(paned), right_box);
 
-    btn_time_p = gtk_button_new_with_label("+1h");
-    g_signal_connect(btn_time_p, "clicked", G_CALLBACK(on_time_add_1h), NULL);
-    gtk_box_append(GTK_BOX(controls_box), btn_time_p);
+    gtk_box_pack_start(GTK_BOX(right_box), gtk_label_new("Elevation (17:00 - 07:00)"), FALSE, FALSE, 5);
+    GtkWidget *elev_area = create_elevation_view(&loc, &dt);
+    gtk_box_pack_start(GTK_BOX(right_box), elev_area, TRUE, TRUE, 0);
 
-    gtk_box_append(GTK_BOX(box_right), controls_box);
+    gtk_widget_show_all(window);
+    gtk_main();
 
-    gtk_paned_set_end_child(GTK_PANED(paned), frame_right);
-    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
-    gtk_paned_set_position(GTK_PANED(paned), 600);
-
-    gtk_window_present(GTK_WINDOW(window));
-}
-
-int main(int argc, char **argv) {
-    GtkApplication *app;
-    int status;
-
-    app = gtk_application_new("org.example.nightsky", G_APPLICATION_DEFAULT_FLAGS);
-    g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
-    status = g_application_run(G_APPLICATION(app), argc, argv);
-    g_object_unref(app);
-
-    free_data(&app_state);
-
-    return status;
+    free_catalog();
+    return 0;
 }
