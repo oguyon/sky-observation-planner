@@ -4,7 +4,16 @@
 #include <gtk/gtk.h>
 #include "sky_model.h"
 
-GtkWidget *create_sky_view(Location *loc, DateTime *dt, gboolean *show_constellations, void (*on_sky_click)(double alt, double az));
+typedef struct {
+    gboolean show_constellation_lines;
+    gboolean show_constellation_names;
+    gboolean show_alt_az_grid;
+    gboolean show_ra_dec_grid;
+    gboolean show_planets;
+    gboolean show_moon_circles;
+} SkyViewOptions;
+
+GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double alt, double az));
 void sky_view_redraw();
 
 #endif

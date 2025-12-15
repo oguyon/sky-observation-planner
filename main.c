@@ -26,7 +26,15 @@ Site sites[] = {
 // Global State
 Location loc = {19.8207, -155.4681}; // Default Maunakea
 DateTime dt = {2024, 1, 1, 0, 0, 0, -10.0}; // Default Date
-gboolean show_constellations = TRUE;
+
+SkyViewOptions sky_options = {
+    .show_constellation_lines = TRUE,
+    .show_constellation_names = FALSE,
+    .show_alt_az_grid = FALSE,
+    .show_ra_dec_grid = FALSE,
+    .show_planets = FALSE,
+    .show_moon_circles = FALSE
+};
 
 static void update_all_views() {
     sky_view_redraw();
@@ -55,8 +63,29 @@ static void on_time_selected_from_plot(DateTime new_dt) {
     update_all_views();
 }
 
-static void on_toggle_constellations(GtkCheckButton *source, gpointer user_data) {
-    show_constellations = gtk_check_button_get_active(source);
+// Toggles
+static void on_toggle_constellation_lines(GtkCheckButton *source, gpointer user_data) {
+    sky_options.show_constellation_lines = gtk_check_button_get_active(source);
+    sky_view_redraw();
+}
+static void on_toggle_constellation_names(GtkCheckButton *source, gpointer user_data) {
+    sky_options.show_constellation_names = gtk_check_button_get_active(source);
+    sky_view_redraw();
+}
+static void on_toggle_alt_az(GtkCheckButton *source, gpointer user_data) {
+    sky_options.show_alt_az_grid = gtk_check_button_get_active(source);
+    sky_view_redraw();
+}
+static void on_toggle_ra_dec(GtkCheckButton *source, gpointer user_data) {
+    sky_options.show_ra_dec_grid = gtk_check_button_get_active(source);
+    sky_view_redraw();
+}
+static void on_toggle_planets(GtkCheckButton *source, gpointer user_data) {
+    sky_options.show_planets = gtk_check_button_get_active(source);
+    sky_view_redraw();
+}
+static void on_toggle_moon_circles(GtkCheckButton *source, gpointer user_data) {
+    sky_options.show_moon_circles = gtk_check_button_get_active(source);
     sky_view_redraw();
 }
 
@@ -107,7 +136,7 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_window_set_child(GTK_WINDOW(window), paned);
 
     // Left Panel: Sky View Only
-    GtkWidget *sky_area = create_sky_view(&loc, &dt, &show_constellations, on_sky_click);
+    GtkWidget *sky_area = create_sky_view(&loc, &dt, &sky_options, on_sky_click);
     gtk_widget_set_size_request(sky_area, 500, 500);
     gtk_paned_set_start_child(GTK_PANED(paned), sky_area);
     gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
@@ -174,11 +203,39 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     gtk_grid_attach(GTK_GRID(controls_grid), date_box, 1, 1, 1, 1);
 
-    // Constellation Toggle
-    GtkWidget *check_const = gtk_check_button_new_with_label("Show Constellations");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(check_const), show_constellations);
-    g_signal_connect(check_const, "toggled", G_CALLBACK(on_toggle_constellations), NULL);
-    gtk_grid_attach(GTK_GRID(controls_grid), check_const, 0, 2, 2, 1);
+    // Toggles
+    GtkWidget *toggle_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_grid_attach(GTK_GRID(controls_grid), toggle_box, 0, 2, 2, 1);
+
+    GtkWidget *cb_const_lines = gtk_check_button_new_with_label("Constellation Lines");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_const_lines), sky_options.show_constellation_lines);
+    g_signal_connect(cb_const_lines, "toggled", G_CALLBACK(on_toggle_constellation_lines), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_const_lines);
+
+    GtkWidget *cb_const_names = gtk_check_button_new_with_label("Constellation Names");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_const_names), sky_options.show_constellation_names);
+    g_signal_connect(cb_const_names, "toggled", G_CALLBACK(on_toggle_constellation_names), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_const_names);
+
+    GtkWidget *cb_alt_az = gtk_check_button_new_with_label("Alt/Az Grid");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_alt_az), sky_options.show_alt_az_grid);
+    g_signal_connect(cb_alt_az, "toggled", G_CALLBACK(on_toggle_alt_az), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_alt_az);
+
+    GtkWidget *cb_ra_dec = gtk_check_button_new_with_label("RA/Dec Grid");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ra_dec), sky_options.show_ra_dec_grid);
+    g_signal_connect(cb_ra_dec, "toggled", G_CALLBACK(on_toggle_ra_dec), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_ra_dec);
+
+    GtkWidget *cb_planets = gtk_check_button_new_with_label("Planets");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_planets), sky_options.show_planets);
+    g_signal_connect(cb_planets, "toggled", G_CALLBACK(on_toggle_planets), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_planets);
+
+    GtkWidget *cb_moon = gtk_check_button_new_with_label("Moon Circles");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_moon), sky_options.show_moon_circles);
+    g_signal_connect(cb_moon, "toggled", G_CALLBACK(on_toggle_moon_circles), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_moon);
 
     // Status Label
     gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 3, 2, 1);
