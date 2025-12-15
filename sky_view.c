@@ -12,18 +12,6 @@ static void (*click_callback)(double, double) = NULL;
 static void project(double alt, double az, double *x, double *y) {
     double r = 1.0 - alt / 90.0;
     if (r < 0) r = 0;
-    // Az in degrees. Convert to radians.
-    // Standard Math: 0 is Right (East), 90 is Up (North).
-    // Azimuth: 0 is North, 90 is East.
-    // Screen: Y is down.
-    // We want North (Az=0) to be Up (Y=-1).
-    // East (Az=90) to be Left (X=-1) or Right?
-    // Looking up at sky: North Up, East is LEFT. West is RIGHT.
-    // But usually sky maps have East on Left if you hold it overhead.
-    // Let's stick to standard:
-    // x = -r * sin(az) (East is Left)
-    // y = -r * cos(az) (North is Top)
-
     double az_rad = az * M_PI / 180.0;
     *x = -r * sin(az_rad);
     *y = -r * cos(az_rad);
@@ -38,16 +26,12 @@ static void unproject(double x, double y, double *alt, double *az) {
     }
     *alt = 90.0 * (1.0 - r);
 
-    // x = -r * sin(az) => sin(az) = -x/r
-    // y = -r * cos(az) => cos(az) = -y/r
     double angle = atan2(-x, -y);
     *az = angle * 180.0 / M_PI;
     if (*az < 0) *az += 360.0;
 }
 
-static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
-    guint width = gtk_widget_get_allocated_width(widget);
-    guint height = gtk_widget_get_allocated_height(widget);
+static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data) {
     double radius = (width < height ? width : height) / 2.0 - 10;
     double cx = width / 2.0;
     double cy = height / 2.0;
@@ -138,28 +122,27 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
         cairo_arc(cr, cx + x * radius, cy + y * radius, 4, 0, 2 * M_PI);
         cairo_fill(cr);
     }
-
-    return FALSE;
 }
 
-static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
     if (click_callback) {
-        guint width = gtk_widget_get_allocated_width(widget);
-        guint height = gtk_widget_get_allocated_height(widget);
+        GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+        int width = gtk_widget_get_width(widget);
+        int height = gtk_widget_get_height(widget);
+
         double radius = (width < height ? width : height) / 2.0 - 10;
         double cx = width / 2.0;
         double cy = height / 2.0;
 
-        double x = (event->x - cx) / radius;
-        double y = (event->y - cy) / radius;
+        double nx = (x - cx) / radius;
+        double ny = (y - cy) / radius;
 
         double alt, az;
-        unproject(x, y, &alt, &az);
+        unproject(nx, ny, &alt, &az);
         if (alt >= 0) {
             click_callback(alt, az);
         }
     }
-    return TRUE;
 }
 
 GtkWidget *create_sky_view(Location *loc, DateTime *dt, gboolean *show_constellations, void (*on_sky_click)(double, double)) {
@@ -170,10 +153,11 @@ GtkWidget *create_sky_view(Location *loc, DateTime *dt, gboolean *show_constella
 
     drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(drawing_area, 400, 400);
-    g_signal_connect(G_OBJECT(drawing_area), "draw", G_CALLBACK(on_draw), NULL);
+    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing_area), on_draw, NULL, NULL);
 
-    gtk_widget_add_events(drawing_area, GDK_BUTTON_PRESS_MASK);
-    g_signal_connect(G_OBJECT(drawing_area), "button-press-event", G_CALLBACK(on_button_press), NULL);
+    GtkGesture *gesture = gtk_gesture_click_new();
+    g_signal_connect(gesture, "pressed", G_CALLBACK(on_pressed), NULL);
+    gtk_widget_add_controller(drawing_area, GTK_EVENT_CONTROLLER(gesture));
 
     return drawing_area;
 }

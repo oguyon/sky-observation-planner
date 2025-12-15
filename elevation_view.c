@@ -10,10 +10,7 @@ static int has_selection = 0;
 static double selected_ra = 0;
 static double selected_dec = 0;
 
-static void on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
-    guint width = gtk_widget_get_allocated_width(widget);
-    guint height = gtk_widget_get_allocated_height(widget);
-
+static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data) {
     // Background
     cairo_set_source_rgb(cr, 0.9, 0.9, 0.9);
     cairo_paint(cr);
@@ -91,7 +88,7 @@ GtkWidget *create_elevation_view(Location *loc, DateTime *dt) {
     current_dt = dt;
     drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(drawing_area, 400, 200);
-    g_signal_connect(G_OBJECT(drawing_area), "draw", G_CALLBACK(on_draw), NULL);
+    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing_area), on_draw, NULL, NULL);
     return drawing_area;
 }
 

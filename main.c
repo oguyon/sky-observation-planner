@@ -49,29 +49,30 @@ static void on_hour_changed(GtkSpinButton *spin_button, gpointer user_data) {
     elevation_view_redraw();
 }
 
-int main(int argc, char *argv[]) {
-    gtk_init(&argc, &argv);
-
+static void activate(GtkApplication *app, gpointer user_data) {
     if (load_catalog() != 0) {
         fprintf(stderr, "Failed to load catalog. Make sure stars.6.json and constellations.lines.json are present.\n");
-        return 1;
+        // In a real app we might show an error dialog here
+        return;
     }
 
-    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    GtkWidget *window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Night Sky Tool");
     gtk_window_set_default_size(GTK_WINDOW(window), 1000, 600);
-    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_container_add(GTK_CONTAINER(window), paned);
+    gtk_window_set_child(GTK_WINDOW(window), paned);
 
     // Left Panel: VBox with Controls + SkyView
     GtkWidget *left_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_paned_add1(GTK_PANED(paned), left_box);
+    gtk_paned_set_start_child(GTK_PANED(paned), left_box);
+    gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
 
     // Controls
     GtkWidget *controls_grid = gtk_grid_new();
-    gtk_box_pack_start(GTK_BOX(left_box), controls_grid, FALSE, FALSE, 5);
+    gtk_grid_set_column_spacing(GTK_GRID(controls_grid), 5);
+    gtk_box_append(GTK_BOX(left_box), controls_grid);
 
     // Location
     gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Lat:"), 0, 0, 1, 1);
@@ -95,25 +96,40 @@ int main(int argc, char *argv[]) {
 
     // Toggle
     GtkWidget *check_const = gtk_check_button_new_with_label("Constellations");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check_const), show_constellations);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check_const), show_constellations);
     g_signal_connect(check_const, "toggled", G_CALLBACK(on_toggle_constellations), NULL);
     gtk_grid_attach(GTK_GRID(controls_grid), check_const, 0, 1, 2, 1);
 
     // Sky View
     GtkWidget *sky_area = create_sky_view(&loc, &dt, &show_constellations, on_sky_click);
-    gtk_box_pack_start(GTK_BOX(left_box), sky_area, TRUE, TRUE, 0);
+    gtk_widget_set_vexpand(sky_area, TRUE);
+    gtk_widget_set_hexpand(sky_area, TRUE);
+    gtk_box_append(GTK_BOX(left_box), sky_area);
 
     // Right Panel: Elevation Graph
     GtkWidget *right_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_paned_add2(GTK_PANED(paned), right_box);
+    gtk_paned_set_end_child(GTK_PANED(paned), right_box);
+    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
 
-    gtk_box_pack_start(GTK_BOX(right_box), gtk_label_new("Elevation (17:00 - 07:00)"), FALSE, FALSE, 5);
+    gtk_box_append(GTK_BOX(right_box), gtk_label_new("Elevation (17:00 - 07:00)"));
     GtkWidget *elev_area = create_elevation_view(&loc, &dt);
-    gtk_box_pack_start(GTK_BOX(right_box), elev_area, TRUE, TRUE, 0);
+    gtk_widget_set_vexpand(elev_area, TRUE);
+    gtk_widget_set_hexpand(elev_area, TRUE);
+    gtk_box_append(GTK_BOX(right_box), elev_area);
 
-    gtk_widget_show_all(window);
-    gtk_main();
+    gtk_window_present(GTK_WINDOW(window));
+}
+
+int main(int argc, char *argv[]) {
+    GtkApplication *app;
+    int status;
+
+    app = gtk_application_new("org.example.nightsky", G_APPLICATION_DEFAULT_FLAGS);
+    g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
+    status = g_application_run(G_APPLICATION(app), argc, argv);
+    g_object_unref(app);
 
     free_catalog();
-    return 0;
+    return status;
 }
