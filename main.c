@@ -75,6 +75,7 @@ static void on_site_changed(GtkComboBoxText *combo, gpointer user_data) {
 
 // Calendar day selected
 static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
+    GtkLabel *label = GTK_LABEL(user_data);
     GDateTime *date = gtk_calendar_get_date(calendar);
     if (date) {
         dt.year = g_date_time_get_year(date);
@@ -83,6 +84,11 @@ static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
         dt.hour = 0; // Midnight Local Time
         dt.minute = 0;
         dt.second = 0;
+
+        char *date_str = g_date_time_format(date, "%Y-%m-%d");
+        gtk_label_set_text(label, date_str);
+        g_free(date_str);
+
         g_date_time_unref(date);
         update_all_views();
     }
@@ -151,16 +157,22 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     // Date Control (Calendar Popover)
     gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Date:"), 0, 1, 1, 1);
+
+    GtkWidget *date_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    GtkWidget *lbl_date_value = gtk_label_new("2024-01-01"); // Init value
     GtkWidget *cal_button = gtk_menu_button_new();
-    gtk_menu_button_set_label(GTK_MENU_BUTTON(cal_button), "Select Date");
+    gtk_menu_button_set_label(GTK_MENU_BUTTON(cal_button), "Select");
+
+    gtk_box_append(GTK_BOX(date_box), lbl_date_value);
+    gtk_box_append(GTK_BOX(date_box), cal_button);
 
     GtkWidget *popover = gtk_popover_new();
     GtkWidget *calendar = gtk_calendar_new();
-    g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), NULL);
+    g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), lbl_date_value);
     gtk_popover_set_child(GTK_POPOVER(popover), calendar);
     gtk_menu_button_set_popover(GTK_MENU_BUTTON(cal_button), popover);
 
-    gtk_grid_attach(GTK_GRID(controls_grid), cal_button, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), date_box, 1, 1, 1, 1);
 
     // Constellation Toggle
     GtkWidget *check_const = gtk_check_button_new_with_label("Show Constellations");

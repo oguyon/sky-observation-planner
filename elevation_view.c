@@ -42,41 +42,116 @@ static double get_hour_diff(DateTime t1, DateTime t2) {
     struct tm tm1 = {0}, tm2 = {0};
     tm1.tm_year = t1.year - 1900; tm1.tm_mon = t1.month - 1; tm1.tm_mday = t1.day;
     tm1.tm_hour = t1.hour; tm1.tm_min = t1.minute; tm1.tm_sec = (int)t1.second;
+    tm1.tm_isdst = -1;
 
     tm2.tm_year = t2.year - 1900; tm2.tm_mon = t2.month - 1; tm2.tm_mday = t2.day;
     tm2.tm_hour = t2.hour; tm2.tm_min = t2.minute; tm2.tm_sec = (int)t2.second;
+    tm2.tm_isdst = -1;
 
     double diff = difftime(mktime(&tm1), mktime(&tm2));
     return diff / 3600.0;
 }
 
-static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data) {
-    // Background
-    cairo_set_source_rgb(cr, 0.95, 0.95, 0.95);
-    cairo_paint(cr);
+static DateTime get_nearest_midnight(DateTime dt) {
+    DateTime midnight = dt;
+    midnight.hour = 0;
+    midnight.minute = 0;
+    midnight.second = 0;
 
+    if (dt.hour >= 12) {
+        // Move to next day
+        return add_hours(midnight, 24.0);
+    }
+    return midnight;
+}
+
+static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data) {
     double margin_left = 50;
     double margin_bottom = 30;
-    double margin_top = 10;
+    double margin_top = 20; // Increased for Sunrise/Sunset Labels
     double margin_right = 10;
 
     double graph_w = width - margin_left - margin_right;
     double graph_h = height - margin_top - margin_bottom;
 
     // Y Scale: -10 to 90
-    // y_px = margin_top + (90 - deg) / 100 * graph_h
     #define DEG_TO_Y(deg) (margin_top + (90.0 - (deg)) / 100.0 * graph_h)
 
-    // Axes
-    cairo_set_source_rgb(cr, 0, 0, 0);
-    cairo_set_line_width(cr, 1);
+    // Determine Center Time (Nearest Midnight)
+    DateTime center_time = get_nearest_midnight(*current_dt);
 
-    // Y Axis
+    // Background Gradient (Twilight/Day/Night)
+    // Draw vertical stripes for each pixel column
+    double x_start = margin_left;
+    double x_end = width - margin_right;
+
+    // Scan for Sunrise/Sunset
+    double sunrise_x = -1, sunset_x = -1;
+
+    for (double x = x_start; x < x_end; x += 1.0) {
+        double ratio = (x - margin_left) / graph_w;
+        double offset_hours = ratio * 16.0 - 8.0;
+        DateTime t = add_hours(center_time, offset_hours);
+
+        double sun_alt, sun_az;
+        get_sun_position(*current_loc, t, &sun_alt, &sun_az);
+
+        double brightness = 0.0;
+        if (sun_alt <= -18.0) {
+            brightness = 0.1; // Dark
+        } else if (sun_alt >= 0.0) {
+            brightness = 0.9; // Bright
+        } else {
+            // Interpolate -18 to 0
+            double f = (sun_alt + 18.0) / 18.0;
+            brightness = 0.1 + f * 0.8;
+        }
+
+        cairo_set_source_rgb(cr, brightness, brightness, brightness);
+        cairo_rectangle(cr, x, margin_top, 1.0, graph_h);
+        cairo_fill(cr);
+
+        // Detect 0 crossing
+        if (x > x_start) {
+            double prev_ratio = (x - 1.0 - margin_left) / graph_w;
+            double prev_offset = prev_ratio * 16.0 - 8.0;
+            DateTime prev_t = add_hours(center_time, prev_offset);
+            double prev_sun_alt, temp_az;
+            get_sun_position(*current_loc, prev_t, &prev_sun_alt, &temp_az);
+
+            if (prev_sun_alt < 0 && sun_alt >= 0) sunrise_x = x;
+            if (prev_sun_alt > 0 && sun_alt <= 0) sunset_x = x;
+        }
+    }
+
+    // Draw Sunrise/Sunset Lines and Labels
+    cairo_set_source_rgb(cr, 1.0, 0.5, 0.0); // Orange
+    cairo_set_line_width(cr, 1);
+    if (sunrise_x > 0) {
+        cairo_move_to(cr, sunrise_x, margin_top);
+        cairo_line_to(cr, sunrise_x, height - margin_bottom);
+        cairo_stroke(cr);
+        cairo_move_to(cr, sunrise_x + 2, margin_top + 10);
+        cairo_show_text(cr, "Sunrise");
+    }
+    if (sunset_x > 0) {
+        cairo_move_to(cr, sunset_x, margin_top);
+        cairo_line_to(cr, sunset_x, height - margin_bottom);
+        cairo_stroke(cr);
+        cairo_move_to(cr, sunset_x - 40, margin_top + 10);
+        cairo_show_text(cr, "Sunset");
+    }
+
+    // Axes and Labels
+    cairo_set_source_rgb(cr, 0, 0, 0); // Black axes (might need contrast adjustment on dark bg, but gradient handles it)
+    // Actually, on dark bg, black axes might be invisible. Let's make axes White or Light Grey.
+    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
+
     cairo_move_to(cr, margin_left, margin_top);
     cairo_line_to(cr, margin_left, height - margin_bottom);
     cairo_stroke(cr);
 
-    // Y Ticks and Labels
+    // Y Ticks
     for (int d = -10; d <= 90; d += 10) {
         double y = DEG_TO_Y(d);
         cairo_move_to(cr, margin_left, y);
@@ -91,23 +166,12 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         cairo_show_text(cr, buf);
     }
 
-    // X Axis (Time)
-    // Range: Midnight - 8h to Midnight + 8h
-    // Midnight of the CURRENT date selected in current_dt (which implies current_dt represents "the night")
-    // Wait, main.c sets current_dt to 00:00 of selected date.
-    // So "Midnight" is exactly current_dt.
-
-    DateTime center_time = *current_dt;
-    center_time.hour = 0; center_time.minute = 0; center_time.second = 0;
-
-    // X Axis Line
     double y_zero = height - margin_bottom;
     cairo_move_to(cr, margin_left, y_zero);
     cairo_line_to(cr, width - margin_right, y_zero);
     cairo_stroke(cr);
 
     // X Ticks
-    // Range -8 to +8
     for (int h = -8; h <= 8; h++) {
         double x = margin_left + (h + 8) / 16.0 * graph_w;
         cairo_move_to(cr, x, y_zero);
@@ -115,7 +179,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         cairo_stroke(cr);
 
         if (h % 2 == 0) {
-            // Label
             DateTime t = add_hours(center_time, h);
             char buf[10];
             sprintf(buf, "%02d:00", t.hour);
@@ -126,7 +189,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         }
     }
 
-    // Current Time Marker (if visible)
+    // "Now" Line (Selected Time)
     double diff_now = get_hour_diff(*current_dt, center_time);
     if (diff_now >= -8 && diff_now <= 8) {
         double x_now = margin_left + (diff_now + 8) / 16.0 * graph_w;
@@ -141,15 +204,13 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     // Plot Objects
     for (int obj = 0; obj < 3; obj++) {
-        // 0: Sun, 1: Moon, 2: Selected
         if (obj == 2 && !has_selection) continue;
 
         if (obj == 0) cairo_set_source_rgb(cr, 1, 0.8, 0); // Sun Yellow
-        else if (obj == 1) cairo_set_source_rgb(cr, 0.5, 0.5, 0.5); // Moon Grey
+        else if (obj == 1) cairo_set_source_rgb(cr, 0.8, 0.8, 0.8); // Moon White/Grey (Brighter for visibility on dark)
         else cairo_set_source_rgb(cr, 1, 0, 0); // Selected Red
 
         int first = 1;
-        // Step every 10 mins = 1/6 hour
         for (double h = -8.0; h <= 8.0; h += 0.166666) {
             DateTime t = add_hours(center_time, h);
 
@@ -158,14 +219,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             else if (obj == 1) get_moon_position(*current_loc, t, &alt, &az);
             else get_horizontal_coordinates(selected_ra, selected_dec, *current_loc, t, &alt, &az);
 
-            // Clamp or skip? Plotting -10 to 90.
-
             double x = margin_left + (h + 8.0) / 16.0 * graph_w;
             double y = DEG_TO_Y(alt);
-
-            // Clip visually if out of bounds? Cairo clip rect handles drawing area bounds.
-            // But we should break line if jumpy or handle clamping y if needed.
-            // Just draw.
 
             if (first) {
                 cairo_move_to(cr, x, y);
@@ -185,7 +240,7 @@ static void on_motion(GtkEventControllerMotion *controller, double x, double y, 
     int height = gtk_widget_get_height(drawing_area);
     double margin_left = 50;
     double margin_bottom = 30;
-    double margin_top = 10;
+    double margin_top = 20;
     double margin_right = 10;
     double graph_w = width - margin_left - margin_right;
     double graph_h = height - margin_top - margin_bottom;
@@ -195,19 +250,11 @@ static void on_motion(GtkEventControllerMotion *controller, double x, double y, 
         return;
     }
 
-    // Map X to Hours from center
     double ratio = (x - margin_left) / graph_w;
     double offset_hours = ratio * 16.0 - 8.0;
 
-    DateTime center_time = *current_dt;
-    center_time.hour = 0; center_time.minute = 0; center_time.second = 0;
+    DateTime center_time = get_nearest_midnight(*current_dt);
     DateTime t = add_hours(center_time, offset_hours);
-
-    // Map Y to Elevation
-    // y = margin_top + (90 - alt)/100 * graph_h
-    // y - margin_top = (90 - alt)/100 * graph_h
-    // (y - margin_top)/graph_h * 100 = 90 - alt
-    // alt = 90 - (y - margin_top)/graph_h * 100
 
     double alt = 90.0 - (y - margin_top) / graph_h * 100.0;
 
@@ -220,7 +267,6 @@ static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y
     if (!time_callback) return;
 
     int width = gtk_widget_get_width(drawing_area);
-    // int height = gtk_widget_get_height(drawing_area);
     double margin_left = 50;
     double margin_right = 10;
     double graph_w = width - margin_left - margin_right;
@@ -230,8 +276,7 @@ static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y
     double ratio = (x - margin_left) / graph_w;
     double offset_hours = ratio * 16.0 - 8.0;
 
-    DateTime center_time = *current_dt;
-    center_time.hour = 0; center_time.minute = 0; center_time.second = 0;
+    DateTime center_time = get_nearest_midnight(*current_dt);
     DateTime new_dt = add_hours(center_time, offset_hours);
 
     time_callback(new_dt);
