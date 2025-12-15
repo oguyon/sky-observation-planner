@@ -363,6 +363,11 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
         snprintf(buf, sizeof(buf), "Moon Dist: %.1f", dist_moon);
         cairo_move_to(cr, width - 155, 70); cairo_show_text(cr, buf);
+
+        snprintf(buf, sizeof(buf), "S:%.1f,%.1f C:%.1f,%.1f", sun_equ.ra, sun_equ.dec, equ.ra, equ.dec);
+        cairo_move_to(cr, width - 155, 85);
+        cairo_set_font_size(cr, 10);
+        cairo_show_text(cr, buf);
     }
 }
 
