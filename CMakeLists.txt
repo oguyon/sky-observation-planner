@@ -4,11 +4,16 @@ project(night_sky C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -g")
 
-# Find GTK4
+# Find dependencies using PkgConfig
 find_package(PkgConfig REQUIRED)
+
+# GTK4
 pkg_check_modules(GTK4 REQUIRED gtk4)
 
-# Find libnova
+# Jansson
+pkg_check_modules(JANSSON REQUIRED jansson)
+
+# Libnova
 # Search for libnova.h inside 'libnova' subdirectory
 find_path(LIBNOVA_INCLUDE_PATH NAMES libnova.h PATH_SUFFIXES libnova PATHS /usr/include /usr/local/include)
 
@@ -21,11 +26,20 @@ endif()
 
 find_library(LIBNOVA_LIBRARY NAMES nova PATHS /usr/lib /usr/local/lib)
 
-include_directories(${GTK4_INCLUDE_DIRS} ${LIBNOVA_INCLUDE_DIR})
-link_directories(${GTK4_LIBRARY_DIRS})
+include_directories(
+    ${GTK4_INCLUDE_DIRS}
+    ${JANSSON_INCLUDE_DIRS}
+    ${LIBNOVA_INCLUDE_DIR}
+)
+
+link_directories(
+    ${GTK4_LIBRARY_DIRS}
+    ${JANSSON_LIBRARY_DIRS}
+)
 
 add_executable(night_sky
     main.c
+    catalog.c
     sky_model.c
     sky_view.c
     elevation_view.c
@@ -33,6 +47,7 @@ add_executable(night_sky
 
 target_link_libraries(night_sky
     ${GTK4_LIBRARIES}
+    ${JANSSON_LIBRARIES}
     ${LIBNOVA_LIBRARY}
     m
 )
