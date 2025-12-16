@@ -82,11 +82,15 @@ int load_catalog() {
 
     // Count lines or realloc
     // Hipparcos has ~118k lines.
-    stars = malloc(sizeof(Star) * 120000);
+    stars = calloc(120000, sizeof(Star));
     num_stars = 0;
 
     char line[1024];
     while (fgets(line, sizeof(line), f)) {
+        if (num_stars >= 120000) {
+            fprintf(stderr, "Warning: Reached maximum star limit (120000). Stopping load.\n");
+            break;
+        }
         if (parse_hip_line(line, &stars[num_stars])) {
             num_stars++;
         }
@@ -119,8 +123,15 @@ int load_catalog() {
         json_t *id_obj = json_object_get(feature, "id");
 
         const char *id_str = json_string_value(id_obj);
-        if(id_str) strncpy(constellations[i].id, id_str, 31);
-        else strcpy(constellations[i].id, "UNK");
+        constellations[i].id = malloc(32);
+        if (constellations[i].id) {
+            if(id_str) {
+                strncpy(constellations[i].id, id_str, 31);
+                constellations[i].id[31] = '\0';
+            } else {
+                strcpy(constellations[i].id, "UNK");
+            }
+        }
 
         if(!json_is_array(coordinates)) continue;
 
@@ -159,6 +170,7 @@ void free_catalog() {
             }
             free(constellations[i].lines);
             free(constellations[i].line_lengths);
+            if (constellations[i].id) free(constellations[i].id);
         }
         free(constellations);
     }

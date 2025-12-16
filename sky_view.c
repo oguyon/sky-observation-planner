@@ -306,6 +306,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     // Draw Stars
     cairo_set_source_rgb(cr, 1, 1, 1);
+    if (!stars) return;
     for (int i = 0; i < num_stars; i++) {
         // Magnitude limit for performance and visibility
         // If zoomed out (view_zoom ~ 1), limit to mag 6.0
