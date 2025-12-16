@@ -2,6 +2,7 @@
 #include "catalog.h"
 #include <math.h>
 #include <stdio.h>
+#include <libnova/julian_day.h>
 
 static Location *current_loc;
 static DateTime *current_dt;
@@ -303,27 +304,30 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     // Time Info Text Box
     {
         double lst = get_lst(*current_dt, *current_loc);
+        while (lst < 0.0) lst += 24.0;
         while (lst > 24.0) lst -= 24.0;
+
+        double jd_ut = get_julian_day(*current_dt);
+        struct ln_date ut_date;
+        ln_get_date(jd_ut, &ut_date);
+
         char buf[256];
-        snprintf(buf, sizeof(buf),
-            "UT: %02d:%02d\nLST: %02d:%02d",
-            current_dt->hour, current_dt->minute,
-            (int)lst, (int)((lst - (int)lst)*60)
-        );
 
         cairo_set_source_rgba(cr, 0, 0, 0, 0.5);
-        cairo_rectangle(cr, 10, 10, 100, 40);
+        cairo_rectangle(cr, 10, 10, 120, 55);
         cairo_fill(cr);
         cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_move_to(cr, 15, 25);
-        cairo_show_text(cr, buf); // Multiline not supported directly by show_text easily without loop, sticking to one line or separate calls
 
-        snprintf(buf, sizeof(buf), "UT: %02d:%02d", current_dt->hour, current_dt->minute);
+        snprintf(buf, sizeof(buf), "Local: %02d:%02d", current_dt->hour, current_dt->minute);
         cairo_move_to(cr, 15, 25);
         cairo_show_text(cr, buf);
 
-        snprintf(buf, sizeof(buf), "LST: %02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
+        snprintf(buf, sizeof(buf), "UT: %02d:%02d", ut_date.hours, ut_date.minutes);
         cairo_move_to(cr, 15, 40);
+        cairo_show_text(cr, buf);
+
+        snprintf(buf, sizeof(buf), "LST: %02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
+        cairo_move_to(cr, 15, 55);
         cairo_show_text(cr, buf);
     }
 
