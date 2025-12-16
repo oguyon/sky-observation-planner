@@ -334,6 +334,12 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         observer.lng = current_loc->lon;
         struct ln_hrz_posn hrz = {cursor_alt, cursor_az};
         struct ln_equ_posn equ;
+
+        // ln_get_equ_from_hrz requires standard Azimuth (0=South)
+        // Our cursor_az is already corrected to Libnova standard (0=South) by unproject
+        // BUT debug showed huge error. Why?
+        // Ah, maybe the input to unproject is wrong?
+
         ln_get_equ_from_hrz(&hrz, &observer, get_julian_day(*current_dt), &equ);
 
         // Distance to Sun/Moon
