@@ -5,6 +5,15 @@
 static Target *targets = NULL;
 static int target_count = 0;
 static int target_capacity = 0;
+static void (*change_cb)(void) = NULL;
+
+void target_list_set_change_callback(void (*cb)(void)) {
+    change_cb = cb;
+}
+
+static void notify_change() {
+    if (change_cb) change_cb();
+}
 
 void target_list_add(const char *name, double ra, double dec, double mag) {
     if (target_count == target_capacity) {
@@ -17,6 +26,7 @@ void target_list_add(const char *name, double ra, double dec, double mag) {
     targets[target_count].dec = dec;
     targets[target_count].mag = mag;
     target_count++;
+    notify_change();
 }
 
 void target_list_remove(int index) {
@@ -25,6 +35,7 @@ void target_list_remove(int index) {
         targets[i] = targets[i + 1];
     }
     target_count--;
+    notify_change();
 }
 
 void target_list_clear() {

@@ -7,13 +7,14 @@
 #include "sky_view.h"
 #include "elevation_view.h"
 #include "source_selection.h"
+#include "target_list.h"
 
 // Site Definition
 typedef struct {
     const char *name;
     double lat;
     double lon;
-    double timezone_offset; // Hours from UTC (e.g. -10 for Hawaii)
+    double timezone_offset;
 } Site;
 
 Site sites[] = {
@@ -26,8 +27,8 @@ Site sites[] = {
 };
 
 // Global State
-Location loc = {19.8207, -155.4681}; // Default Maunakea
-DateTime dt; // Initialized in main
+Location loc = {19.8207, -155.4681};
+DateTime dt;
 
 SkyViewOptions sky_options = {
     .show_constellation_lines = TRUE,
@@ -39,9 +40,69 @@ SkyViewOptions sky_options = {
     .show_ecliptic = FALSE
 };
 
+// UI Widgets for Target List
+static GtkColumnView *target_list_view = NULL;
+static GtkStringList *target_list_model = NULL;
+
 static void update_all_views() {
     sky_view_redraw();
     elevation_view_redraw();
+}
+
+static void refresh_target_list_ui() {
+    if (!target_list_model) return;
+
+    // Clear existing model is hard with GtkStringList without rebuilding.
+    // Rebuild the model.
+    int cnt = target_list_get_count();
+    const char **items = malloc(sizeof(char*) * (cnt + 1));
+    for (int i=0; i<cnt; i++) {
+        Target *t = target_list_get(i);
+        char *buf = malloc(128);
+        snprintf(buf, 128, "%s (RA:%.2f, Dec:%.2f)", t->name, t->ra, t->dec);
+        items[i] = buf;
+    }
+    items[cnt] = NULL;
+
+    GtkStringList *new_model = gtk_string_list_new(items);
+    GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(new_model));
+    gtk_column_view_set_model(target_list_view, GTK_SELECTION_MODEL(sel));
+
+    // Previous model is effectively replaced.
+    // Note: If we want to preserve selection, it's harder.
+
+    for (int i=0; i<cnt; i++) free((char*)items[i]);
+    free(items);
+}
+
+// Callback from target_list module
+static void on_target_list_changed() {
+    refresh_target_list_ui();
+    update_all_views();
+}
+
+static void on_delete_target_clicked(GtkButton *btn, gpointer user_data) {
+    if (!target_list_view) return;
+    GtkSelectionModel *model = gtk_column_view_get_model(target_list_view);
+    GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
+    guint pos = gtk_single_selection_get_selected(sel);
+
+    if (pos != GTK_INVALID_LIST_POSITION) {
+        target_list_remove(pos);
+        // refresh_target_list_ui will be called via callback
+    }
+}
+
+static void target_list_setup_cb(GtkSignalListItemFactory *self, GtkListItem *list_item, gpointer user_data) {
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void target_list_bind_cb(GtkSignalListItemFactory *self, GtkListItem *list_item, gpointer user_data) {
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    GtkStringObject *strobj = gtk_list_item_get_item(list_item);
+    gtk_label_set_text(GTK_LABEL(label), gtk_string_object_get_string(strobj));
 }
 
 void on_sky_click(double alt, double az) {
@@ -57,23 +118,15 @@ void on_sky_click(double alt, double az) {
     struct ln_equ_posn equ;
     ln_get_equ_from_hrz(&hrz, &observer, JD, &equ);
 
-    // Instead of setting selected directly, open Source Selection
-    // Need parent window? GtkApplicationWindow is not globally accessible here easily.
-    // However, transient_for can be NULL or we can find it.
-    // Let's assume NULL parent for now (toplevel) or find active window.
-
-    // Get active window from application? Main is local.
-    // Use NULL parent, GTK handles it.
     show_source_selection_dialog(NULL, equ.ra, equ.dec, &loc, &dt);
 }
 
-// Callback from elevation view
 static void on_time_selected_from_plot(DateTime new_dt) {
     dt = new_dt;
     update_all_views();
 }
 
-// Toggles
+// Toggles (Simplified helper?) No, keep explicit for GCallback casting
 static void on_toggle_constellation_lines(GtkCheckButton *source, gpointer user_data) {
     sky_options.show_constellation_lines = gtk_check_button_get_active(source);
     sky_view_redraw();
@@ -98,7 +151,6 @@ static void on_toggle_moon_circles(GtkCheckButton *source, gpointer user_data) {
     sky_options.show_moon_circles = gtk_check_button_get_active(source);
     sky_view_redraw();
 }
-
 static void on_toggle_ecliptic(GtkCheckButton *source, gpointer user_data) {
     sky_options.show_ecliptic = gtk_check_button_get_active(source);
     sky_view_redraw();
@@ -116,7 +168,6 @@ static void on_site_changed(GObject *object, GParamSpec *pspec, gpointer user_da
     }
 }
 
-// Calendar day selected
 static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
     GtkLabel *label = GTK_LABEL(user_data);
     GDateTime *date = gtk_calendar_get_date(calendar);
@@ -124,7 +175,7 @@ static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
         dt.year = g_date_time_get_year(date);
         dt.month = g_date_time_get_month(date);
         dt.day = g_date_time_get_day_of_month(date);
-        dt.hour = 0; // Midnight Local Time
+        dt.hour = 0;
         dt.minute = 0;
         dt.second = 0;
 
@@ -139,25 +190,28 @@ static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
 
 static void activate(GtkApplication *app, gpointer user_data) {
     if (load_catalog() != 0) {
-        fprintf(stderr, "Failed to load catalog. Make sure stars.6.json and constellations.lines.json are present.\n");
+        fprintf(stderr, "Failed to load catalog.\n");
         return;
     }
 
+    // Register callback
+    target_list_set_change_callback(on_target_list_changed);
+
     GtkWidget *window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Night Sky Tool");
-    gtk_window_set_default_size(GTK_WINDOW(window), 1000, 600);
+    gtk_window_set_default_size(GTK_WINDOW(window), 1000, 700);
 
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_window_set_child(GTK_WINDOW(window), paned);
 
-    // Left Panel: Sky View Only
+    // Left Panel: Sky View
     GtkWidget *sky_area = create_sky_view(&loc, &dt, &sky_options, on_sky_click);
     gtk_widget_set_size_request(sky_area, 500, 500);
     gtk_paned_set_start_child(GTK_PANED(paned), sky_area);
     gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
     gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
 
-    // Right Panel: Split Vertical (Elevation Top, Controls Bottom)
+    // Right Panel: Split Vertical (Elevation Top, Bottom Area)
     GtkWidget *right_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_paned_set_end_child(GTK_PANED(paned), right_box);
     gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
@@ -172,43 +226,44 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(right_box), gtk_label_new("Elevation (Midnight +/- 8h)"));
     gtk_box_append(GTK_BOX(right_box), elev_area);
 
-    // Controls Box (Bottom Half)
+    // Bottom Area: Split Horizontal (Controls Left, Target List Right)
+    GtkWidget *bottom_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_vexpand(bottom_box, TRUE);
+    gtk_box_append(GTK_BOX(right_box), bottom_box);
+
+    // Controls Frame (Left Side of Bottom)
     GtkWidget *controls_frame = gtk_frame_new("Controls");
-    gtk_widget_set_vexpand(controls_frame, TRUE);
-    gtk_box_append(GTK_BOX(right_box), controls_frame);
+    gtk_widget_set_hexpand(controls_frame, TRUE);
+    gtk_box_append(GTK_BOX(bottom_box), controls_frame);
 
     GtkWidget *controls_grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(controls_grid), 10);
     gtk_grid_set_column_spacing(GTK_GRID(controls_grid), 10);
-    gtk_widget_set_margin_top(controls_grid, 20);
-    gtk_widget_set_margin_bottom(controls_grid, 20);
-    gtk_widget_set_margin_start(controls_grid, 20);
-    gtk_widget_set_margin_end(controls_grid, 20);
+    gtk_widget_set_margin_top(controls_grid, 10);
+    gtk_widget_set_margin_bottom(controls_grid, 10);
+    gtk_widget_set_margin_start(controls_grid, 10);
+    gtk_widget_set_margin_end(controls_grid, 10);
     gtk_frame_set_child(GTK_FRAME(controls_frame), controls_grid);
 
     // Site Dropdown
     gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Site:"), 0, 0, 1, 1);
-
     GtkStringList *site_list = gtk_string_list_new(NULL);
     for (int i = 0; sites[i].name != NULL; i++) {
         gtk_string_list_append(site_list, sites[i].name);
     }
-
     GtkWidget *dropdown_site = gtk_drop_down_new(G_LIST_MODEL(site_list), NULL);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown_site), 0); // Default Maunakea
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown_site), 0);
     g_signal_connect(dropdown_site, "notify::selected", G_CALLBACK(on_site_changed), NULL);
     gtk_grid_attach(GTK_GRID(controls_grid), dropdown_site, 1, 0, 1, 1);
 
-    // Date Control (Calendar Popover)
+    // Date Control
     gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Date:"), 0, 1, 1, 1);
-
     GtkWidget *date_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     char date_buf[32];
     sprintf(date_buf, "%04d-%02d-%02d", dt.year, dt.month, dt.day);
     GtkWidget *lbl_date_value = gtk_label_new(date_buf);
     GtkWidget *cal_button = gtk_menu_button_new();
     gtk_menu_button_set_label(GTK_MENU_BUTTON(cal_button), "Select");
-
     gtk_box_append(GTK_BOX(date_box), lbl_date_value);
     gtk_box_append(GTK_BOX(date_box), cal_button);
 
@@ -217,32 +272,31 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), lbl_date_value);
     gtk_popover_set_child(GTK_POPOVER(popover), calendar);
     gtk_menu_button_set_popover(GTK_MENU_BUTTON(cal_button), popover);
-
     gtk_grid_attach(GTK_GRID(controls_grid), date_box, 1, 1, 1, 1);
 
     // Toggles
-    GtkWidget *toggle_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    GtkWidget *toggle_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_grid_attach(GTK_GRID(controls_grid), toggle_box, 0, 2, 2, 1);
 
-    GtkWidget *cb_const_lines = gtk_check_button_new_with_label("Constellation Lines");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_const_lines), sky_options.show_constellation_lines);
-    g_signal_connect(cb_const_lines, "toggled", G_CALLBACK(on_toggle_constellation_lines), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_const_lines);
+    GtkWidget *cb_lines = gtk_check_button_new_with_label("Constellation Lines");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_lines), sky_options.show_constellation_lines);
+    g_signal_connect(cb_lines, "toggled", G_CALLBACK(on_toggle_constellation_lines), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_lines);
 
-    GtkWidget *cb_const_names = gtk_check_button_new_with_label("Constellation Names");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_const_names), sky_options.show_constellation_names);
-    g_signal_connect(cb_const_names, "toggled", G_CALLBACK(on_toggle_constellation_names), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_const_names);
+    GtkWidget *cb_names = gtk_check_button_new_with_label("Constellation Names");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_names), sky_options.show_constellation_names);
+    g_signal_connect(cb_names, "toggled", G_CALLBACK(on_toggle_constellation_names), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_names);
 
-    GtkWidget *cb_alt_az = gtk_check_button_new_with_label("Alt/Az Grid");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_alt_az), sky_options.show_alt_az_grid);
-    g_signal_connect(cb_alt_az, "toggled", G_CALLBACK(on_toggle_alt_az), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_alt_az);
+    GtkWidget *cb_alt = gtk_check_button_new_with_label("Alt/Az Grid");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_alt), sky_options.show_alt_az_grid);
+    g_signal_connect(cb_alt, "toggled", G_CALLBACK(on_toggle_alt_az), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_alt);
 
-    GtkWidget *cb_ra_dec = gtk_check_button_new_with_label("RA/Dec Grid");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ra_dec), sky_options.show_ra_dec_grid);
-    g_signal_connect(cb_ra_dec, "toggled", G_CALLBACK(on_toggle_ra_dec), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_ra_dec);
+    GtkWidget *cb_ra = gtk_check_button_new_with_label("RA/Dec Grid");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ra), sky_options.show_ra_dec_grid);
+    g_signal_connect(cb_ra, "toggled", G_CALLBACK(on_toggle_ra_dec), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_ra);
 
     GtkWidget *cb_planets = gtk_check_button_new_with_label("Planets");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_planets), sky_options.show_planets);
@@ -259,7 +313,6 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(cb_ecliptic, "toggled", G_CALLBACK(on_toggle_ecliptic), NULL);
     gtk_box_append(GTK_BOX(toggle_box), cb_ecliptic);
 
-    // Reset View Button
     GtkWidget *btn_reset = gtk_button_new_with_label("Reset View");
     g_signal_connect(btn_reset, "clicked", G_CALLBACK(sky_view_reset_view), NULL);
     gtk_box_append(GTK_BOX(toggle_box), btn_reset);
@@ -267,20 +320,50 @@ static void activate(GtkApplication *app, gpointer user_data) {
     // Status Label
     gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 3, 2, 1);
 
+    // Target List Frame (Right Side of Bottom)
+    GtkWidget *targets_frame = gtk_frame_new("Targets");
+    gtk_widget_set_hexpand(targets_frame, TRUE);
+    gtk_box_append(GTK_BOX(bottom_box), targets_frame);
+
+    GtkWidget *target_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_widget_set_margin_top(target_box, 5);
+    gtk_widget_set_margin_bottom(target_box, 5);
+    gtk_widget_set_margin_start(target_box, 5);
+    gtk_widget_set_margin_end(target_box, 5);
+    gtk_frame_set_child(GTK_FRAME(targets_frame), target_box);
+
+    GtkWidget *scrolled_list = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scrolled_list, TRUE);
+    gtk_box_append(GTK_BOX(target_box), scrolled_list);
+
+    target_list_view = GTK_COLUMN_VIEW(gtk_column_view_new(NULL));
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_list), GTK_WIDGET(target_list_view));
+
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(target_list_setup_cb), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(target_list_bind_cb), NULL);
+    GtkColumnViewColumn *col = gtk_column_view_column_new("Target", factory);
+    gtk_column_view_append_column(target_list_view, col);
+
+    GtkWidget *btn_del_target = gtk_button_new_with_label("Delete Selected");
+    g_signal_connect(btn_del_target, "clicked", G_CALLBACK(on_delete_target_clicked), NULL);
+    gtk_box_append(GTK_BOX(target_box), btn_del_target);
+
+    refresh_target_list_ui();
+
     gtk_window_present(GTK_WINDOW(window));
 }
 
 int main(int argc, char *argv[]) {
-    // Initialize dt to current local time
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
     dt.year = tm->tm_year + 1900;
     dt.month = tm->tm_mon + 1;
     dt.day = tm->tm_mday;
-    dt.hour = 0; // Midnight local
+    dt.hour = 0;
     dt.minute = 0;
     dt.second = 0;
-    dt.timezone_offset = -10.0; // Default Maunakea
+    dt.timezone_offset = -10.0;
 
     GtkApplication *app;
     int status;

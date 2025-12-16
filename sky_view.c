@@ -355,6 +355,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             transform_point(u, v, &tx, &ty);
 
             // Light Red Circle
+            cairo_new_path(cr);
             cairo_set_source_rgb(cr, 1.0, 0.3, 0.3);
             cairo_arc(cr, cx + tx * radius, cy + ty * radius, 6, 0, 2 * M_PI);
             cairo_stroke(cr);

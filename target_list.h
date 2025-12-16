@@ -16,4 +16,6 @@ void target_list_clear();
 int target_list_get_count();
 Target *target_list_get(int index);
 
+void target_list_set_change_callback(void (*cb)(void));
+
 #endif
