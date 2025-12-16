@@ -37,10 +37,17 @@ static int parse_hip_line(char *line, Star *s) {
         if (*ptr == '|') {
             *ptr = '\0';
             // Process field at field_start
-            if (field_idx == 1) strncpy(hip_str, field_start, 15);
-            else if (field_idx == 5) strncpy(vmag_str, field_start, 15);
-            else if (field_idx == 8) strncpy(ra_str, field_start, 31);
-            else if (field_idx == 9) strncpy(dec_str, field_start, 31);
+            // Based on visual inspection: H|HIP|Proxy|RAhms|DEdms|Vmag|Var|Src|RAdeg|DEdeg|...
+            // Indices (1-based token):
+            // 1: H
+            // 2: HIP
+            // 6: Vmag
+            // 9: RAdeg
+            // 10: DEdeg
+            if (field_idx == 2) strncpy(hip_str, field_start, 15);
+            else if (field_idx == 6) strncpy(vmag_str, field_start, 15);
+            else if (field_idx == 9) strncpy(ra_str, field_start, 31);
+            else if (field_idx == 10) strncpy(dec_str, field_start, 31);
 
             field_start = ptr + 1;
             field_idx++;
