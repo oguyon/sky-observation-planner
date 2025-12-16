@@ -145,7 +145,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         // Alt circles
         for (int alt = 30; alt < 90; alt += 30) {
             double r_alt = 1.0 - alt / 90.0;
-            double t_r = r_alt * view_zoom;
+            double t_r = r_alt * radius * view_zoom;
 
             cairo_new_path(cr);
             cairo_arc(cr, h_cx, h_cy, t_r, 0, 2 * M_PI);

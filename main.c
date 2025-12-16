@@ -337,6 +337,8 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(target_box), scrolled_list);
 
     target_list_view = GTK_COLUMN_VIEW(gtk_column_view_new(NULL));
+    gtk_widget_set_vexpand(GTK_WIDGET(target_list_view), TRUE);
+    gtk_widget_set_hexpand(GTK_WIDGET(target_list_view), TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_list), GTK_WIDGET(target_list_view));
 
     GtkListItemFactory *factory = gtk_signal_list_item_factory_new();

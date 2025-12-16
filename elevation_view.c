@@ -10,16 +10,6 @@ static GtkWidget *drawing_area;
 static GtkLabel *status_label = NULL;
 static TimeSelectedCallback time_callback = NULL;
 
-static int has_selection = 0; // Legacy support or replaced by target list?
-// User said "Maintain a target list. Display the elevation curve for each of the targets"
-// I will ignore the single selection API or keep it as legacy for click-to-view if needed.
-// But the requirement says "add to target list".
-// Let's assume `elevation_view_set_selected` is no longer the primary way, or adds to the list?
-// The prompt implies `set_selected` was the old way.
-// I will modify `elevation_view_set_selected` to ADD to the list or just ignore it if the user wants strict list mode.
-// Actually, I'll iterate `target_list` AND draw `selected` if it exists separately?
-// No, simpler to just iterate target list.
-
 // Helper to add hours to a DateTime
 static DateTime add_hours(DateTime dt, double hours) {
     struct tm t = {0};
