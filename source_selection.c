@@ -276,7 +276,7 @@ void show_source_selection_dialog(GtkWindow *parent, double ra, double dec, Loca
     gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
     gtk_widget_set_size_request(list_scroll, 250, -1);
 
-    GtkColumnView *list = gtk_column_view_new(NULL); // Init with NULL model
+    GtkColumnView *list = GTK_COLUMN_VIEW(gtk_column_view_new(NULL)); // Init with NULL model
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(list_scroll), GTK_WIDGET(list));
 
     GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
