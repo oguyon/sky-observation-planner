@@ -17,6 +17,12 @@ static double cursor_az = -1;
 static double view_zoom = 1.0;
 static double view_rotation = 0.0; // Radians
 static double view_pan_y = 0.0;    // Normalized units
+static int highlighted_target_index = -1;
+
+void sky_view_set_highlighted_target(int index) {
+    highlighted_target_index = index;
+    sky_view_redraw();
+}
 
 void sky_view_reset_view() {
     view_zoom = 1.0;
@@ -320,8 +326,11 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         if (project(alt, az + 180.0, &u, &v)) {
             double tx, ty;
             transform_point(u, v, &tx, &ty);
-            double size = 2.0 - (stars[i].mag / 3.0);
+
+            double size = (2.0 - (stars[i].mag / 3.0));
             if (size < 0.5) size = 0.5;
+            // Scale with zoom
+            size *= pow(view_zoom, 0.5);
 
             cairo_new_path(cr);
             cairo_arc(cr, cx + tx * radius, cy + ty * radius, size, 0, 2 * M_PI);
@@ -363,10 +372,18 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             transform_point(u, v, &tx, &ty);
 
             // Light Red Circle
+            if (i == highlighted_target_index) {
+                cairo_set_source_rgb(cr, 0.0, 1.0, 1.0); // Cyan Highlight
+                cairo_set_line_width(cr, 3.0);
+            } else {
+                cairo_set_source_rgb(cr, 1.0, 0.3, 0.3); // Light Red
+                cairo_set_line_width(cr, 1.5);
+            }
+
             cairo_new_path(cr);
-            cairo_set_source_rgb(cr, 1.0, 0.3, 0.3);
             cairo_arc(cr, cx + tx * radius, cy + ty * radius, 6, 0, 2 * M_PI);
             cairo_stroke(cr);
+            cairo_set_line_width(cr, 1.0); // Reset
 
             // Label
             cairo_move_to(cr, cx + tx * radius + 8, cy + ty * radius);

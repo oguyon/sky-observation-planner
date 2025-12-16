@@ -10,5 +10,6 @@ typedef void (*TimeSelectedCallback)(DateTime new_dt);
 GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *status_label, TimeSelectedCallback on_time_selected);
 void elevation_view_set_selected(double ra, double dec);
 void elevation_view_redraw();
+ void elevation_view_set_highlighted_target(int index);
 
 #endif

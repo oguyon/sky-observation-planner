@@ -9,6 +9,12 @@ static DateTime *current_dt;
 static GtkWidget *drawing_area;
 static GtkLabel *status_label = NULL;
 static TimeSelectedCallback time_callback = NULL;
+static int highlighted_target_index = -1;
+
+void elevation_view_set_highlighted_target(int index) {
+    highlighted_target_index = index;
+    elevation_view_redraw();
+}
 
 // Helper to add hours to a DateTime
 static DateTime add_hours(DateTime dt, double hours) {
@@ -272,7 +278,13 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     int cnt = target_list_get_count();
     for (int i=0; i<cnt; i++) {
         Target *tgt = target_list_get(i);
-        cairo_set_source_rgb(cr, 1, 0.3, 0.3); // Light Red
+        if (i == highlighted_target_index) {
+            cairo_set_source_rgb(cr, 0.0, 1.0, 1.0); // Cyan
+            cairo_set_line_width(cr, 3.0);
+        } else {
+            cairo_set_source_rgb(cr, 1, 0.3, 0.3); // Light Red
+            cairo_set_line_width(cr, 1.5);
+        }
 
         int first = 1;
         for (double h = -8.0; h <= 8.0; h += 0.166666) {

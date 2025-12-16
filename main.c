@@ -48,6 +48,19 @@ static void update_all_views() {
     elevation_view_redraw();
 }
 
+static void on_target_selection_changed(GtkSelectionModel *model, guint position, guint n_items, gpointer user_data) {
+    GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
+    guint selected = gtk_single_selection_get_selected(sel);
+
+    int index = -1;
+    if (selected != GTK_INVALID_LIST_POSITION) {
+        index = (int)selected;
+    }
+
+    sky_view_set_highlighted_target(index);
+    elevation_view_set_highlighted_target(index);
+}
+
 static void refresh_target_list_ui() {
     if (!target_list_view) return;
 
@@ -64,10 +77,9 @@ static void refresh_target_list_ui() {
 
     GtkStringList *new_model = gtk_string_list_new(items);
     GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(new_model));
-    gtk_column_view_set_model(target_list_view, GTK_SELECTION_MODEL(sel));
+    g_signal_connect(sel, "selection-changed", G_CALLBACK(on_target_selection_changed), NULL);
 
-    // Previous model is effectively replaced.
-    // Note: If we want to preserve selection, it's harder.
+    gtk_column_view_set_model(target_list_view, GTK_SELECTION_MODEL(sel));
 
     for (int i=0; i<cnt; i++) free((char*)items[i]);
     free(items);

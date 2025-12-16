@@ -17,5 +17,6 @@ typedef struct {
 GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double alt, double az));
 void sky_view_redraw();
 void sky_view_reset_view();
+void sky_view_set_highlighted_target(int index);
 
 #endif
