@@ -70,8 +70,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     // Alt/Az Grid
     if (current_options->show_alt_az_grid) {
-        cairo_set_source_rgba(cr, 0.3, 0.3, 0.3, 0.5);
-        cairo_set_line_width(cr, 0.5);
+        cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.8);
+        cairo_set_line_width(cr, 1.0);
 
         // Alt circles
         for (int alt = 30; alt < 90; alt += 30) {
@@ -97,8 +97,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     // RA/Dec Grid (Projected)
     if (current_options->show_ra_dec_grid) {
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.5, 0.5); // Blue-ish
-        cairo_set_line_width(cr, 0.5);
+        cairo_set_source_rgba(cr, 0.3, 0.3, 0.8, 0.8); // Blue-ish
+        cairo_set_line_width(cr, 1.0);
 
         // Dec circles (approximate by drawing lines between points)
         for (int dec = -60; dec <= 80; dec += 20) {
@@ -116,9 +116,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                 }
             }
             cairo_stroke(cr);
-
-            // Draw label at some visible point?
-            // Simple approach: calculate at RA=0 or current sidereal time?
         }
 
         // RA lines
@@ -138,6 +135,35 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             }
             cairo_stroke(cr);
         }
+    }
+
+    // Ecliptic
+    if (current_options->show_ecliptic) {
+        cairo_set_source_rgba(cr, 1.0, 1.0, 0.0, 0.8); // Yellow
+        cairo_set_line_width(cr, 2.0);
+
+        int first = 1;
+        // Ecliptic is defined by Ecliptic Latitude 0. Scan Ecliptic Longitude.
+        // Libnova has ln_get_equ_from_ecl
+        double jd = get_julian_day(*current_dt);
+        for (int lon = 0; lon <= 360; lon += 2) {
+            struct ln_lnlat_posn ecl = {lon, 0};
+            struct ln_equ_posn equ;
+            ln_get_equ_from_ecl(&ecl, jd, &equ);
+
+            double alt, az;
+            get_horizontal_coordinates(equ.ra, equ.dec, *current_loc, *current_dt, &alt, &az);
+
+            if (alt >= 0) {
+                double x, y;
+                project(alt, az + 180.0, &x, &y);
+                if (first) { cairo_move_to(cr, cx + x * radius, cy + y * radius); first = 0; }
+                else { cairo_line_to(cr, cx + x * radius, cy + y * radius); }
+            } else {
+                first = 1;
+            }
+        }
+        cairo_stroke(cr);
     }
 
     // Draw Constellations

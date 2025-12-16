@@ -1,6 +1,7 @@
 #include <gtk/gtk.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "catalog.h"
 #include "sky_model.h"
 #include "sky_view.h"
@@ -25,7 +26,7 @@ Site sites[] = {
 
 // Global State
 Location loc = {19.8207, -155.4681}; // Default Maunakea
-DateTime dt = {2024, 1, 1, 0, 0, 0, -10.0}; // Default Date
+DateTime dt; // Initialized in main
 
 SkyViewOptions sky_options = {
     .show_constellation_lines = TRUE,
@@ -33,7 +34,8 @@ SkyViewOptions sky_options = {
     .show_alt_az_grid = FALSE,
     .show_ra_dec_grid = FALSE,
     .show_planets = FALSE,
-    .show_moon_circles = FALSE
+    .show_moon_circles = FALSE,
+    .show_ecliptic = FALSE
 };
 
 static void update_all_views() {
@@ -86,6 +88,11 @@ static void on_toggle_planets(GtkCheckButton *source, gpointer user_data) {
 }
 static void on_toggle_moon_circles(GtkCheckButton *source, gpointer user_data) {
     sky_options.show_moon_circles = gtk_check_button_get_active(source);
+    sky_view_redraw();
+}
+
+static void on_toggle_ecliptic(GtkCheckButton *source, gpointer user_data) {
+    sky_options.show_ecliptic = gtk_check_button_get_active(source);
     sky_view_redraw();
 }
 
@@ -237,6 +244,11 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(cb_moon, "toggled", G_CALLBACK(on_toggle_moon_circles), NULL);
     gtk_box_append(GTK_BOX(toggle_box), cb_moon);
 
+    GtkWidget *cb_ecliptic = gtk_check_button_new_with_label("Ecliptic");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ecliptic), sky_options.show_ecliptic);
+    g_signal_connect(cb_ecliptic, "toggled", G_CALLBACK(on_toggle_ecliptic), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_ecliptic);
+
     // Status Label
     gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 3, 2, 1);
 
@@ -244,6 +256,17 @@ static void activate(GtkApplication *app, gpointer user_data) {
 }
 
 int main(int argc, char *argv[]) {
+    // Initialize dt to current local time
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    dt.year = tm->tm_year + 1900;
+    dt.month = tm->tm_mon + 1;
+    dt.day = tm->tm_mday;
+    dt.hour = 0; // Midnight local
+    dt.minute = 0;
+    dt.second = 0;
+    dt.timezone_offset = -10.0; // Default Maunakea
+
     GtkApplication *app;
     int status;
 

@@ -142,6 +142,49 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         cairo_show_text(cr, "Sunset");
     }
 
+    // Shading for elevation limits
+    // Below 0: Transparent Red
+    double y_0 = DEG_TO_Y(0);
+    double y_min10 = DEG_TO_Y(-10);
+    cairo_set_source_rgba(cr, 1.0, 0.0, 0.0, 0.3); // Red, 0.3 alpha
+    cairo_rectangle(cr, margin_left, y_0, graph_w, y_min10 - y_0);
+    cairo_fill(cr);
+
+    // 0 to 20: Gradient Red -> Yellow -> Black
+    double y_20 = DEG_TO_Y(20);
+    cairo_pattern_t *pat = cairo_pattern_create_linear(0, y_20, 0, y_0);
+
+    // y_20 (Top) -> Black (Color 0,0,0 alpha 0?) User said "fading to black".
+    // "light transparent yellow at elevation=15"
+    // "red at elevation=0" (Bottom of gradient)
+    // 0 -> Red
+    // 15 -> Yellow
+    // 20 -> Black
+
+    // pattern coords are user space.
+    // y_20 is at top (Elev 20). y_0 is at bottom (Elev 0).
+    // offset 0 is at start (y_20), offset 1 is at end (y_0).
+
+    // We want:
+    // Elev 20 (offset 0): Black/Transparent
+    // Elev 15 (offset ?) : Yellow
+    // Elev 0 (offset 1): Red
+
+    // Map Elev to offset in [0, 20] range inverted?
+    // Total range 20.
+    // Elev 20 -> 0.0
+    // Elev 15 -> 0.25 (5/20 from top)
+    // Elev 0 -> 1.0
+
+    cairo_pattern_add_color_stop_rgba(pat, 0.0, 0, 0, 0, 0.0); // Black Transparent? Or Solid Black? "Fading to black at 20" usually implies "darkness". But if I make it solid black, it hides the graph. Assuming Transparent Black (shadow) or just Transparent. Let's try (0,0,0,0).
+    cairo_pattern_add_color_stop_rgba(pat, 0.25, 1, 1, 0, 0.3); // Transparent Yellow
+    cairo_pattern_add_color_stop_rgba(pat, 1.0, 1, 0, 0, 0.3); // Transparent Red at 0
+
+    cairo_set_source(cr, pat);
+    cairo_rectangle(cr, margin_left, y_20, graph_w, y_0 - y_20);
+    cairo_fill(cr);
+    cairo_pattern_destroy(pat);
+
     // Axes and Labels
     cairo_set_source_rgb(cr, 0, 0, 0); // Black axes (might need contrast adjustment on dark bg, but gradient handles it)
     // Actually, on dark bg, black axes might be invisible. Let's make axes White or Light Grey.
@@ -263,10 +306,8 @@ static void on_motion(GtkEventControllerMotion *controller, double x, double y, 
     gtk_label_set_text(status_label, buffer);
 }
 
-static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
+static void update_time_from_x(double x, int width) {
     if (!time_callback) return;
-
-    int width = gtk_widget_get_width(drawing_area);
     double margin_left = 50;
     double margin_right = 10;
     double graph_w = width - margin_left - margin_right;
@@ -280,6 +321,18 @@ static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y
     DateTime new_dt = add_hours(center_time, offset_hours);
 
     time_callback(new_dt);
+}
+
+static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
+    GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    update_time_from_x(x, gtk_widget_get_width(widget));
+}
+
+static void on_drag_update(GtkGestureDrag *gesture, double offset_x, double offset_y, gpointer user_data) {
+    GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    double start_x, start_y;
+    gtk_gesture_drag_get_start_point(gesture, &start_x, &start_y);
+    update_time_from_x(start_x + offset_x, gtk_widget_get_width(widget));
 }
 
 GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *label, TimeSelectedCallback on_time_selected) {
@@ -299,6 +352,12 @@ GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *label, T
     GtkGesture *click_controller = gtk_gesture_click_new();
     g_signal_connect(click_controller, "pressed", G_CALLBACK(on_pressed), NULL);
     gtk_widget_add_controller(drawing_area, GTK_EVENT_CONTROLLER(click_controller));
+
+    // Right mouse drag
+    GtkGesture *drag_controller = gtk_gesture_drag_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag_controller), 3); // Right button
+    g_signal_connect(drag_controller, "drag-update", G_CALLBACK(on_drag_update), NULL);
+    gtk_widget_add_controller(drawing_area, GTK_EVENT_CONTROLLER(drag_controller));
 
     return drawing_area;
 }

@@ -11,6 +11,7 @@ typedef struct {
     gboolean show_ra_dec_grid;
     gboolean show_planets;
     gboolean show_moon_circles;
+    gboolean show_ecliptic;
 } SkyViewOptions;
 
 GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double alt, double az));
