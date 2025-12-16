@@ -15,8 +15,8 @@ static double cursor_az = -1;
 
 // View State
 static double view_zoom = 1.0;
-static double view_rotation = 0.0; // Radians
-static double view_pan_y = 0.0;    // Normalized units
+static double view_pan_x = 0.0; // Normalized units
+static double view_pan_y = 0.0; // Normalized units
 static int highlighted_target_index = -1;
 
 void sky_view_set_highlighted_target(int index) {
@@ -26,7 +26,7 @@ void sky_view_set_highlighted_target(int index) {
 
 void sky_view_reset_view() {
     view_zoom = 1.0;
-    view_rotation = 0.0;
+    view_pan_x = 0.0;
     view_pan_y = 0.0;
     sky_view_redraw();
 }
@@ -43,34 +43,30 @@ static int project(double alt, double az, double *x, double *y) {
     return 1;
 }
 
-// Apply View Transformation (Rotation -> Scale -> Pan)
+// Apply View Transformation (Pan -> Scale)
 static void transform_point(double u, double v, double *tx, double *ty) {
-    // Rotate
-    double r_u = u * cos(view_rotation) - v * sin(view_rotation);
-    double r_v = u * sin(view_rotation) + v * cos(view_rotation);
+    // Pan
+    double p_u = u; // No rotation
+    double p_v = v;
 
     // Scale
-    double s_u = r_u * view_zoom;
-    double s_v = r_v * view_zoom;
+    double s_u = p_u * view_zoom;
+    double s_v = p_v * view_zoom;
 
-    // Pan
-    *tx = s_u;
+    // Translation (Pan)
+    *tx = s_u + view_pan_x;
     *ty = s_v + view_pan_y;
 }
 
 // Inverse transform for click
 static void untransform_point(double tx, double ty, double *u, double *v) {
     // Un-Pan
-    double s_u = tx;
+    double s_u = tx - view_pan_x;
     double s_v = ty - view_pan_y;
 
     // Un-Scale
-    double r_u = s_u / view_zoom;
-    double r_v = s_v / view_zoom;
-
-    // Un-Rotate
-    *u = r_u * cos(-view_rotation) - r_v * sin(-view_rotation);
-    *v = r_u * sin(-view_rotation) + r_v * cos(-view_rotation);
+    *u = s_u / view_zoom;
+    *v = s_v / view_zoom;
 }
 
 // Inverse projection for click
@@ -110,11 +106,11 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     // Horizon Circle (Transformed)
     // Horizon is unit circle in projection space.
-    // Transform center (0,0) -> (0, view_pan_y) scaled by zoom.
-    // But rotation doesn't change circle shape.
-    // Radius becomes radius * zoom.
+    // Transform center (0,0) -> (view_pan_x, view_pan_y) scaled by zoom? No.
+    // transform_point(0,0) -> tx=view_pan_x, ty=view_pan_y.
+    // Radius becomes radius * view_zoom.
 
-    double h_cx = cx + 0;
+    double h_cx = cx + view_pan_x * radius;
     double h_cy = cy + view_pan_y * radius;
     double h_r = radius * view_zoom;
 
@@ -315,8 +311,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     if (!stars) return;
     for (int i = 0; i < num_stars; i++) {
         // Magnitude limit for performance and visibility
-        // If zoomed out (view_zoom ~ 1), limit to mag 6.0
-        // If zoomed in, allow fainter.
         double limit = 6.0 + 2.0 * log10(view_zoom);
         if (stars[i].mag > limit) continue;
 
@@ -327,10 +321,12 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             double tx, ty;
             transform_point(u, v, &tx, &ty);
 
-            double size = (2.0 - (stars[i].mag / 3.0));
-            if (size < 0.5) size = 0.5;
+            // New formula for star size
+            double base_size = 3.0 - stars[i].mag * 0.15;
+            if (base_size < 0.2) base_size = 0.2;
+
             // Scale with zoom
-            size *= pow(view_zoom, 0.5);
+            double size = base_size * pow(view_zoom, 0.5);
 
             cairo_new_path(cr);
             cairo_arc(cr, cx + tx * radius, cy + ty * radius, size, 0, 2 * M_PI);
@@ -614,11 +610,11 @@ static void on_scroll(GtkEventControllerScroll *controller, double dx, double dy
     sky_view_redraw();
 }
 
-static double drag_start_rotation = 0;
+static double drag_start_pan_x = 0;
 static double drag_start_pan_y = 0;
 
 static void on_drag_begin(GtkGestureDrag *gesture, double start_x, double start_y, gpointer user_data) {
-    drag_start_rotation = view_rotation;
+    drag_start_pan_x = view_pan_x;
     drag_start_pan_y = view_pan_y;
 }
 
@@ -628,15 +624,15 @@ static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, dou
     int height = gtk_widget_get_height(widget);
     double radius = (width < height ? width : height) / 2.0 - 10;
 
-    // offset_x -> Rotation
-    // Drag Left (negative x) -> Rotate Counter Clockwise?
-    // Sensitivity: Full width = 180 deg?
-    view_rotation = drag_start_rotation + (offset_x / radius);
+    // Pan (Translation) logic
+    // offset_x/y is in pixels.
+    // transform_point: tx = s_u + view_pan_x.
+    // visual_x = cx + tx * radius.
+    // d(visual_x) = radius * d(view_pan_x).
+    // We want d(visual_x) = offset_x.
+    // So d(view_pan_x) = offset_x / radius.
 
-    // offset_y -> Pan Y
-    // Drag Up (negative y) -> Move Zenith Up (negative Pan Y in Cairo coord? No, +Pan Y moves down.)
-    // User said: "Drag up will move the Zenith point up".
-    // Cairo Y increases downwards. So Drag Up (negative dy) should move Center Up (negative dy).
+    view_pan_x = drag_start_pan_x + (offset_x / radius);
     view_pan_y = drag_start_pan_y + (offset_y / radius);
 
     sky_view_redraw();
@@ -665,7 +661,7 @@ GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options,
     g_signal_connect(scroll, "scroll", G_CALLBACK(on_scroll), NULL);
     gtk_widget_add_controller(drawing_area, scroll);
 
-    // Drag (Rotate/Pan) - Right Button
+    // Drag (Pan) - Right Button
     GtkGesture *drag = gtk_gesture_drag_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), 3);
     g_signal_connect(drag, "drag-begin", G_CALLBACK(on_drag_begin), NULL);
