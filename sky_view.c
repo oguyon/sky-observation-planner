@@ -307,6 +307,12 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     // Draw Stars
     cairo_set_source_rgb(cr, 1, 1, 1);
     for (int i = 0; i < num_stars; i++) {
+        // Magnitude limit for performance and visibility
+        // If zoomed out (view_zoom ~ 1), limit to mag 6.0
+        // If zoomed in, allow fainter.
+        double limit = 6.0 + 2.0 * log10(view_zoom);
+        if (stars[i].mag > limit) continue;
+
         double alt, az;
         get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
         double u, v;
@@ -316,6 +322,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             double size = 2.0 - (stars[i].mag / 3.0);
             if (size < 0.5) size = 0.5;
 
+            cairo_new_path(cr);
             cairo_arc(cr, cx + tx * radius, cy + ty * radius, size, 0, 2 * M_PI);
             cairo_fill(cr);
         }

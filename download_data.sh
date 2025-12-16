@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # URLs for the data files
-STARS_URL="https://raw.githubusercontent.com/ofrohn/d3-celestial/master/data/stars.6.json"
+# Hipparcos Catalog I/239 from VizieR (Tarball)
+HIP_TAR_URL="https://cdsarc.cds.unistra.fr/viz-bin/nph-Cat/tar.gz?I/239"
 CONSTELLATIONS_URL="https://raw.githubusercontent.com/ofrohn/d3-celestial/master/data/constellations.lines.json"
 
 # Function to download a file if it doesn't exist
@@ -31,8 +32,27 @@ download_file() {
     fi
 }
 
-# Download the files
-download_file "$STARS_URL" "stars.6.json"
+# Clean up broken attempts
+if [ -f "hip_main.dat.gz" ] && [ ! -s "hip_main.dat.gz" ]; then
+    rm hip_main.dat.gz
+fi
+
+# Download Hipparcos
+if [ ! -f "hip_main.dat" ]; then
+    echo "Downloading Hipparcos Catalog..."
+    download_file "$HIP_TAR_URL" "I_239.tar.gz"
+
+    echo "Extracting Hipparcos Catalog..."
+    tar -xvf I_239.tar.gz --wildcards "*hip_main.dat" --transform='s/.*\///'
+
+    if [ -f "hip_main.dat.gz" ]; then
+        gunzip hip_main.dat.gz
+    fi
+
+    rm I_239.tar.gz
+fi
+
+# Download Constellations
 download_file "$CONSTELLATIONS_URL" "constellations.lines.json"
 
 echo "Data download complete."

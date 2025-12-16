@@ -14,3 +14,10 @@ night_sky
 # IDEs
 .vscode/
 .idea/
+
+# Data
+stars.6.json
+constellations.lines.json
+hip_main.dat
+hip_main.dat.gz
+I_239.tar.gz
