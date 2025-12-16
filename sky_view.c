@@ -332,7 +332,10 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         struct ln_lnlat_posn observer;
         observer.lat = current_loc->lat;
         observer.lng = current_loc->lon;
-        struct ln_hrz_posn hrz = {cursor_alt, cursor_az};
+        struct ln_hrz_posn hrz;
+        hrz.az = cursor_az;
+        hrz.alt = cursor_alt;
+
         struct ln_equ_posn equ;
 
         // ln_get_equ_from_hrz requires standard Azimuth (0=South)
