@@ -42,7 +42,6 @@ SkyViewOptions sky_options = {
 
 // UI Widgets for Target List
 static GtkColumnView *target_list_view = NULL;
-static GtkStringList *target_list_model = NULL;
 
 static void update_all_views() {
     sky_view_redraw();
@@ -50,9 +49,8 @@ static void update_all_views() {
 }
 
 static void refresh_target_list_ui() {
-    if (!target_list_model) return;
+    if (!target_list_view) return;
 
-    // Clear existing model is hard with GtkStringList without rebuilding.
     // Rebuild the model.
     int cnt = target_list_get_count();
     const char **items = malloc(sizeof(char*) * (cnt + 1));
