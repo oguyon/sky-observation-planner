@@ -63,7 +63,24 @@ static int parse_hip_line(char *line, Star *s) {
     // sscanf handles whitespace usually.
 
     // HIP
-    // s->id? We don't store ID in current struct.
+    // Allocate and store ID.
+    // HIP numbers are usually numeric, but we store as string "HIP <number>".
+    // Or just the number string.
+    // Let's store "HIP " + number.
+    if (hip_str[0]) {
+        // Trim whitespace
+        char *h = hip_str;
+        while (*h == ' ') h++;
+        // Also trim trailing? strncpy might have spaces.
+        // Assuming atoi logic or simple copy.
+        s->id = malloc(32);
+        if (s->id) {
+            snprintf((char*)s->id, 32, "HIP %s", h);
+            // Warning: casting const char* to char* to write.
+            // Star struct defines id as const char*.
+            // But we are the creator.
+        }
+    }
 
     // Mag
     if (vmag_str[0]) s->mag = atof(vmag_str);
@@ -168,7 +185,12 @@ int load_catalog() {
 }
 
 void free_catalog() {
-    if (stars) free(stars);
+    if (stars) {
+        for (int i=0; i<num_stars; i++) {
+            if (stars[i].id) free((void*)stars[i].id);
+        }
+        free(stars);
+    }
 
     if (constellations) {
         for (int i=0; i<num_constellations; i++) {

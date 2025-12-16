@@ -95,7 +95,11 @@ static void update_candidate_list() {
             candidates[candidate_count].dec = stars[i].dec;
             candidates[candidate_count].mag = stars[i].mag;
             candidates[candidate_count].dist = dist;
-            snprintf(candidates[candidate_count].name, 64, "Star (Mag %.1f)", stars[i].mag);
+            if (stars[i].id) {
+                snprintf(candidates[candidate_count].name, 64, "%s (Mag %.1f)", stars[i].id, stars[i].mag);
+            } else {
+                snprintf(candidates[candidate_count].name, 64, "Star (Mag %.1f)", stars[i].mag);
+            }
             candidate_count++;
         }
     }
