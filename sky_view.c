@@ -12,13 +12,58 @@ static void (*click_callback)(double, double) = NULL;
 static double cursor_alt = -1;
 static double cursor_az = -1;
 
+// View State
+static double view_zoom = 1.0;
+static double view_rotation = 0.0; // Radians
+static double view_pan_y = 0.0;    // Normalized units
+
+void sky_view_reset_view() {
+    view_zoom = 1.0;
+    view_rotation = 0.0;
+    view_pan_y = 0.0;
+    sky_view_redraw();
+}
+
 // Helper to project Alt/Az to X/Y (0-1 range from center)
-static void project(double alt, double az, double *x, double *y) {
+// Returns 1 if valid (above horizon), 0 otherwise
+static int project(double alt, double az, double *x, double *y) {
+    if (alt < 0) return 0;
     double r = 1.0 - alt / 90.0;
     if (r < 0) r = 0;
     double az_rad = az * M_PI / 180.0;
     *x = -r * sin(az_rad);
     *y = -r * cos(az_rad);
+    return 1;
+}
+
+// Apply View Transformation (Rotation -> Scale -> Pan)
+static void transform_point(double u, double v, double *tx, double *ty) {
+    // Rotate
+    double r_u = u * cos(view_rotation) - v * sin(view_rotation);
+    double r_v = u * sin(view_rotation) + v * cos(view_rotation);
+
+    // Scale
+    double s_u = r_u * view_zoom;
+    double s_v = r_v * view_zoom;
+
+    // Pan
+    *tx = s_u;
+    *ty = s_v + view_pan_y;
+}
+
+// Inverse transform for click
+static void untransform_point(double tx, double ty, double *u, double *v) {
+    // Un-Pan
+    double s_u = tx;
+    double s_v = ty - view_pan_y;
+
+    // Un-Scale
+    double r_u = s_u / view_zoom;
+    double r_v = s_v / view_zoom;
+
+    // Un-Rotate
+    *u = r_u * cos(-view_rotation) - r_v * sin(-view_rotation);
+    *v = r_u * sin(-view_rotation) + r_v * cos(-view_rotation);
 }
 
 // Inverse projection for click
@@ -52,21 +97,44 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     double cx = width / 2.0;
     double cy = height / 2.0;
 
-    // Background
-    cairo_set_source_rgb(cr, 0, 0, 0.1); // Dark blue/black
+    // Background (Fill Widget)
+    cairo_set_source_rgb(cr, 0, 0, 0);
     cairo_paint(cr);
 
-    // Horizon
-    cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
-    cairo_arc(cr, cx, cy, radius, 0, 2 * M_PI);
-    cairo_stroke(cr);
+    // Horizon Circle (Transformed)
+    // Horizon is unit circle in projection space.
+    // Transform center (0,0) -> (0, view_pan_y) scaled by zoom.
+    // But rotation doesn't change circle shape.
+    // Radius becomes radius * zoom.
 
-    // Directions
+    double h_cx = cx + 0;
+    double h_cy = cy + view_pan_y * radius;
+    double h_r = radius * view_zoom;
+
+    // Sky Background (Dark Blue) inside Horizon
+    cairo_set_source_rgb(cr, 0, 0, 0.1);
+    cairo_arc(cr, h_cx, h_cy, h_r, 0, 2 * M_PI);
+    cairo_fill_preserve(cr); // Fill and keep path for clipping/stroking
+
+    // Clip to Horizon
+    cairo_save(cr);
+    cairo_clip(cr);
+
+    // Directions (N, S, E, W)
+    // Project them (Alt=0, Az=0, 90, 180, 270)
+    struct { char *label; double az; } dirs[] = {
+        {"N", 180}, {"S", 0}, {"E", 270}, {"W", 90} // Libnova conventions: S=0, W=90, N=180, E=270
+    };
+
     cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-    cairo_move_to(cr, cx, cy - radius); cairo_show_text(cr, "N");
-    cairo_move_to(cr, cx, cy + radius); cairo_show_text(cr, "S");
-    cairo_move_to(cr, cx - radius, cy); cairo_show_text(cr, "E");
-    cairo_move_to(cr, cx + radius, cy); cairo_show_text(cr, "W");
+    for (int i=0; i<4; i++) {
+        double u, v;
+        if (project(0, dirs[i].az + 180, &u, &v)) { // +180 to correct Libnova->Screen
+            double tx, ty;
+            transform_point(u, v, &tx, &ty);
+            draw_text_centered(cr, cx + tx * radius, cy + ty * radius, dirs[i].label);
+        }
+    }
 
     // Alt/Az Grid
     if (current_options->show_alt_az_grid) {
@@ -75,22 +143,44 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
         // Alt circles
         for (int alt = 30; alt < 90; alt += 30) {
+            // Draw circle in projection space, then transform?
+            // A circle in projection space (centered at Zenith) transforms to a circle.
+            // Radius r_alt.
+            // Center (0,0) -> (0, pan_y).
+            // Radius r_alt * zoom.
             double r_alt = 1.0 - alt / 90.0;
-            cairo_arc(cr, cx, cy, r_alt * radius, 0, 2 * M_PI);
+            double t_r = r_alt * view_zoom;
+            // Center is same as horizon center
+            cairo_arc(cr, h_cx, h_cy, t_r, 0, 2 * M_PI);
             cairo_stroke(cr);
 
             // Label
             char buf[10]; sprintf(buf, "%d", alt);
-            cairo_move_to(cr, cx + 2, cy - r_alt * radius + 10);
+            // Where to put label? North line?
+            // Project point (Alt, Az=180) -> North
+            double u, v;
+            project(alt, 180 + 180, &u, &v);
+            double tx, ty;
+            transform_point(u, v, &tx, &ty);
+            cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
             cairo_show_text(cr, buf);
         }
 
         // Az lines
         for (int az = 0; az < 360; az += 45) {
-            double x, y;
-            project(0, az + 180.0, &x, &y);
-            cairo_move_to(cr, cx, cy);
-            cairo_line_to(cr, cx + x * radius, cy + y * radius);
+            double u, v;
+            // Zenith
+            project(90, az, &u, &v); // (0,0)
+            double tx1, ty1;
+            transform_point(u, v, &tx1, &ty1);
+
+            // Horizon
+            project(0, az + 180, &u, &v);
+            double tx2, ty2;
+            transform_point(u, v, &tx2, &ty2);
+
+            cairo_move_to(cr, cx + tx1 * radius, cy + ty1 * radius);
+            cairo_line_to(cr, cx + tx2 * radius, cy + ty2 * radius);
             cairo_stroke(cr);
         }
     }
@@ -100,17 +190,19 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         cairo_set_source_rgba(cr, 0.3, 0.3, 0.8, 0.8); // Blue-ish
         cairo_set_line_width(cr, 1.0);
 
-        // Dec circles (approximate by drawing lines between points)
+        // Dec circles
         for (int dec = -60; dec <= 80; dec += 20) {
             int first = 1;
             for (int ra = 0; ra <= 360; ra += 5) {
                 double alt, az;
                 get_horizontal_coordinates(ra, dec, *current_loc, *current_dt, &alt, &az);
-                if (alt >= 0) {
-                    double x, y;
-                    project(alt, az + 180.0, &x, &y);
-                    if (first) { cairo_move_to(cr, cx + x * radius, cy + y * radius); first = 0; }
-                    else { cairo_line_to(cr, cx + x * radius, cy + y * radius); }
+
+                double u, v;
+                if (project(alt, az + 180.0, &u, &v)) {
+                    double tx, ty;
+                    transform_point(u, v, &tx, &ty);
+                    if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
+                    else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
                 } else {
                     first = 1;
                 }
@@ -124,11 +216,13 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             for (int dec = -90; dec <= 90; dec += 5) {
                 double alt, az;
                 get_horizontal_coordinates(ra_h * 15.0, dec, *current_loc, *current_dt, &alt, &az);
-                if (alt >= 0) {
-                    double x, y;
-                    project(alt, az + 180.0, &x, &y);
-                    if (first) { cairo_move_to(cr, cx + x * radius, cy + y * radius); first = 0; }
-                    else { cairo_line_to(cr, cx + x * radius, cy + y * radius); }
+
+                double u, v;
+                if (project(alt, az + 180.0, &u, &v)) {
+                    double tx, ty;
+                    transform_point(u, v, &tx, &ty);
+                    if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
+                    else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
                 } else {
                     first = 1;
                 }
@@ -143,8 +237,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         cairo_set_line_width(cr, 2.0);
 
         int first = 1;
-        // Ecliptic is defined by Ecliptic Latitude 0. Scan Ecliptic Longitude.
-        // Libnova has ln_get_equ_from_ecl
         double jd = get_julian_day(*current_dt);
         for (int lon = 0; lon <= 360; lon += 2) {
             struct ln_lnlat_posn ecl = {lon, 0};
@@ -154,11 +246,12 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             double alt, az;
             get_horizontal_coordinates(equ.ra, equ.dec, *current_loc, *current_dt, &alt, &az);
 
-            if (alt >= 0) {
-                double x, y;
-                project(alt, az + 180.0, &x, &y);
-                if (first) { cairo_move_to(cr, cx + x * radius, cy + y * radius); first = 0; }
-                else { cairo_line_to(cr, cx + x * radius, cy + y * radius); }
+            double u, v;
+            if (project(alt, az + 180.0, &u, &v)) {
+                double tx, ty;
+                transform_point(u, v, &tx, &ty);
+                if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
+                else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
             } else {
                 first = 1;
             }
@@ -183,19 +276,20 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                     double alt, az;
                     get_horizontal_coordinates(ra, dec, *current_loc, *current_dt, &alt, &az);
 
-                    if (alt >= 0) {
-                        double x, y;
-                        project(alt, az + 180.0, &x, &y);
+                    double u, v;
+                    if (project(alt, az + 180.0, &u, &v)) {
+                        double tx, ty;
+                        transform_point(u, v, &tx, &ty);
 
-                        center_x += x;
-                        center_y += y;
+                        center_x += tx;
+                        center_y += ty;
                         count_pts++;
 
                         if (first) {
-                            cairo_move_to(cr, cx + x * radius, cy + y * radius);
+                            cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
                             first = 0;
                         } else {
-                            cairo_line_to(cr, cx + x * radius, cy + y * radius);
+                            cairo_line_to(cr, cx + tx * radius, cy + ty * radius);
                         }
                     } else {
                         first = 1;
@@ -219,13 +313,14 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     for (int i = 0; i < num_stars; i++) {
         double alt, az;
         get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
-        if (alt >= 0) {
-            double x, y;
-            project(alt, az + 180.0, &x, &y);
+        double u, v;
+        if (project(alt, az + 180.0, &u, &v)) {
+            double tx, ty;
+            transform_point(u, v, &tx, &ty);
             double size = 2.0 - (stars[i].mag / 3.0);
             if (size < 0.5) size = 0.5;
 
-            cairo_arc(cr, cx + x * radius, cy + y * radius, size, 0, 2 * M_PI);
+            cairo_arc(cr, cx + tx * radius, cy + ty * radius, size, 0, 2 * M_PI);
             cairo_fill(cr);
         }
     }
@@ -238,13 +333,14 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         for (int p=0; p<7; p++) {
             double alt, az, ra, dec;
             get_planet_position(p_ids[p], *current_loc, *current_dt, &alt, &az, &ra, &dec);
-            if (alt >= 0) {
-                double x, y;
-                project(alt, az + 180.0, &x, &y);
+            double u, v;
+            if (project(alt, az + 180.0, &u, &v)) {
+                double tx, ty;
+                transform_point(u, v, &tx, &ty);
                 cairo_set_source_rgb(cr, 1.0, 0.5, 0.5);
-                cairo_arc(cr, cx + x * radius, cy + y * radius, 3, 0, 2 * M_PI);
+                cairo_arc(cr, cx + tx * radius, cy + ty * radius, 3, 0, 2 * M_PI);
                 cairo_fill(cr);
-                cairo_move_to(cr, cx + x * radius + 4, cy + y * radius);
+                cairo_move_to(cr, cx + tx * radius + 4, cy + ty * radius);
                 cairo_show_text(cr, p_names[p]);
             }
         }
@@ -253,14 +349,17 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     // Draw Sun
     double s_alt, s_az;
     get_sun_position(*current_loc, *current_dt, &s_alt, &s_az);
-    if (s_alt >= 0) {
-        double x, y;
-        project(s_alt, s_az + 180.0, &x, &y);
-        cairo_set_source_rgb(cr, 1, 1, 0);
-        cairo_arc(cr, cx + x * radius, cy + y * radius, 5, 0, 2 * M_PI);
-        cairo_fill(cr);
-        cairo_move_to(cr, cx + x * radius + 6, cy + y * radius);
-        cairo_show_text(cr, "Sun");
+    {
+        double u, v;
+        if (project(s_alt, s_az + 180.0, &u, &v)) {
+            double tx, ty;
+            transform_point(u, v, &tx, &ty);
+            cairo_set_source_rgb(cr, 1, 1, 0);
+            cairo_arc(cr, cx + tx * radius, cy + ty * radius, 5, 0, 2 * M_PI);
+            cairo_fill(cr);
+            cairo_move_to(cr, cx + tx * radius + 6, cy + ty * radius);
+            cairo_show_text(cr, "Sun");
+        }
     }
 
     // Draw Moon
@@ -269,65 +368,76 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     get_moon_position(*current_loc, *current_dt, &m_alt, &m_az);
     get_moon_equ_coords(*current_dt, &m_ra, &m_dec);
 
-    if (m_alt >= 0) {
-        double x, y;
-        project(m_alt, m_az + 180.0, &x, &y);
-        cairo_set_source_rgb(cr, 0.8, 0.8, 0.8);
-        cairo_arc(cr, cx + x * radius, cy + y * radius, 4, 0, 2 * M_PI);
-        cairo_fill(cr);
-        cairo_move_to(cr, cx + x * radius + 6, cy + y * radius);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_show_text(cr, "Moon");
+    {
+        double u, v;
+        if (project(m_alt, m_az + 180.0, &u, &v)) {
+            double tx, ty;
+            transform_point(u, v, &tx, &ty);
+            cairo_set_source_rgb(cr, 0.8, 0.8, 0.8);
+            cairo_arc(cr, cx + tx * radius, cy + ty * radius, 4, 0, 2 * M_PI);
+            cairo_fill(cr);
+            cairo_move_to(cr, cx + tx * radius + 6, cy + ty * radius);
+            cairo_set_source_rgb(cr, 1, 1, 1);
+            cairo_show_text(cr, "Moon");
 
-        // Draw Concentric Circles around Moon
-        if (current_options->show_moon_circles) {
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.3);
-            cairo_set_line_width(cr, 1.0);
+            // Draw Concentric Circles around Moon
+            if (current_options->show_moon_circles) {
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.3);
+                cairo_set_line_width(cr, 1.0);
 
-            // Draw 5, 10, 15, 20 deg circles
-            // To be accurate in projection, we should project points.
-            // Simple approx: circle in projection? No, heavily distorted.
-            // Better: Scan circle around Moon RA/Dec and project.
+                for (int r_deg = 5; r_deg <= 20; r_deg += 5) {
+                    int first_pt = 1;
+                    for (int ang = 0; ang <= 360; ang += 10) {
+                        double theta = ang * M_PI / 180.0;
+                        double delta = r_deg * M_PI / 180.0;
+                        double alt0 = m_alt * M_PI / 180.0;
+                        double az0 = m_az * M_PI / 180.0;
 
-            for (int r_deg = 5; r_deg <= 20; r_deg += 5) {
-                int first_pt = 1;
-                for (int ang = 0; ang <= 360; ang += 10) {
-                    // This is spherical calc.
-                    // Approximate by converting to Alt/Az locally?
-                    // Let's use simple angular separation in RA/Dec space if projection allows,
-                    // but Alt/Az projection is easier.
-                    // Let's compute points at distance R from Moon(Alt, Az).
-                    // This requires spherical trig: Given (Alt0, Az0), distance R, bearing Theta -> (Alt1, Az1).
+                        double sin_alt1 = sin(alt0)*cos(delta) + cos(alt0)*sin(delta)*cos(theta);
+                        double alt1 = asin(sin_alt1);
+                        double y_val = sin(delta)*sin(theta);
+                        double x_val = cos(delta)*cos(alt0) - sin(alt0)*sin(delta)*cos(theta);
+                        double az1 = az0 + atan2(y_val, x_val);
 
-                    double theta = ang * M_PI / 180.0;
-                    double delta = r_deg * M_PI / 180.0;
-                    double alt0 = m_alt * M_PI / 180.0;
-                    double az0 = m_az * M_PI / 180.0; // Libnova Az
+                        double alt_deg = alt1 * 180.0 / M_PI;
+                        double az_deg = az1 * 180.0 / M_PI;
 
-                    double sin_alt1 = sin(alt0)*cos(delta) + cos(alt0)*sin(delta)*cos(theta);
-                    double alt1 = asin(sin_alt1);
-                    double y = sin(delta)*sin(theta);
-                    double x_val = cos(delta)*cos(alt0) - sin(alt0)*sin(delta)*cos(theta); // x name conflict
-                    double az1 = az0 + atan2(y, x_val);
-
-                    double alt_deg = alt1 * 180.0 / M_PI;
-                    double az_deg = az1 * 180.0 / M_PI;
-
-                    if (alt_deg >= 0) {
-                        double px, py;
-                        project(alt_deg, az_deg + 180.0, &px, &py);
-                        if (first_pt) { cairo_move_to(cr, cx + px * radius, cy + py * radius); first_pt = 0; }
-                        else { cairo_line_to(cr, cx + px * radius, cy + py * radius); }
-                    } else {
-                        first_pt = 1;
+                        double u2, v2;
+                        if (project(alt_deg, az_deg + 180.0, &u2, &v2)) {
+                            double tx2, ty2;
+                            transform_point(u2, v2, &tx2, &ty2);
+                            if (first_pt) { cairo_move_to(cr, cx + tx2 * radius, cy + ty2 * radius); first_pt = 0; }
+                            else { cairo_line_to(cr, cx + tx2 * radius, cy + ty2 * radius); }
+                        } else {
+                            first_pt = 1;
+                        }
                     }
+                    cairo_stroke(cr);
                 }
-                cairo_stroke(cr);
             }
         }
     }
 
-    // Time Info Text Box
+    // Zenith Spot (Yellow)
+    {
+        double u, v;
+        project(90, 0, &u, &v); // Zenith
+        double tx, ty;
+        transform_point(u, v, &tx, &ty);
+        cairo_set_source_rgb(cr, 1, 1, 0); // Yellow
+        cairo_arc(cr, cx + tx * radius, cy + ty * radius, 3, 0, 2 * M_PI);
+        cairo_fill(cr);
+    }
+
+    // Restore clipping
+    cairo_restore(cr);
+
+    // Horizon Stroke (Draw again on top of clip)
+    cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
+    cairo_arc(cr, h_cx, h_cy, h_r, 0, 2 * M_PI);
+    cairo_stroke(cr);
+
+    // Time Info Text Box (Fixed position, not transformed)
     {
         double lst = get_lst(*current_dt, *current_loc);
         while (lst < 0.0) lst += 24.0;
@@ -367,11 +477,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         hrz.alt = cursor_alt;
 
         struct ln_equ_posn equ;
-
-        // ln_get_equ_from_hrz requires standard Azimuth (0=South)
-        // Our cursor_az is already corrected to Libnova standard (0=South) by unproject
-        // BUT debug showed huge error. Why?
-        // Ah, maybe the input to unproject is wrong?
 
         ln_get_equ_from_hrz(&hrz, &observer, get_julian_day(*current_dt), &equ);
 
@@ -423,8 +528,11 @@ static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y
         double nx = (x - cx) / radius;
         double ny = (y - cy) / radius;
 
+        double u, v;
+        untransform_point(nx, ny, &u, &v);
+
         double alt, az;
-        unproject(nx, ny, &alt, &az);
+        unproject(u, v, &alt, &az);
         if (alt >= 0) {
             click_callback(alt, az);
         }
@@ -443,10 +551,50 @@ static void on_motion(GtkEventControllerMotion *controller, double x, double y, 
     double nx = (x - cx) / radius;
     double ny = (y - cy) / radius;
 
-    unproject(nx, ny, &cursor_alt, &cursor_az);
+    double u, v;
+    untransform_point(nx, ny, &u, &v);
+
+    unproject(u, v, &cursor_alt, &cursor_az);
 
     // Trigger redraw to update cursor info
     gtk_widget_queue_draw(widget);
+}
+
+static void on_scroll(GtkEventControllerScroll *controller, double dx, double dy, gpointer user_data) {
+    if (dy < 0) {
+        view_zoom *= 1.1;
+    } else {
+        view_zoom /= 1.1;
+    }
+    sky_view_redraw();
+}
+
+static double drag_start_rotation = 0;
+static double drag_start_pan_y = 0;
+
+static void on_drag_begin(GtkGestureDrag *gesture, double start_x, double start_y, gpointer user_data) {
+    drag_start_rotation = view_rotation;
+    drag_start_pan_y = view_pan_y;
+}
+
+static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, double offset_y, gpointer user_data) {
+    GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    int width = gtk_widget_get_width(widget);
+    int height = gtk_widget_get_height(widget);
+    double radius = (width < height ? width : height) / 2.0 - 10;
+
+    // offset_x -> Rotation
+    // Drag Left (negative x) -> Rotate Counter Clockwise?
+    // Sensitivity: Full width = 180 deg?
+    view_rotation = drag_start_rotation + (offset_x / radius);
+
+    // offset_y -> Pan Y
+    // Drag Up (negative y) -> Move Zenith Up (negative Pan Y in Cairo coord? No, +Pan Y moves down.)
+    // User said: "Drag up will move the Zenith point up".
+    // Cairo Y increases downwards. So Drag Up (negative dy) should move Center Up (negative dy).
+    view_pan_y = drag_start_pan_y + (offset_y / radius);
+
+    sky_view_redraw();
 }
 
 GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double, double)) {
@@ -466,6 +614,18 @@ GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options,
     GtkEventController *motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(on_motion), NULL);
     gtk_widget_add_controller(drawing_area, motion);
+
+    // Scroll (Zoom)
+    GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+    g_signal_connect(scroll, "scroll", G_CALLBACK(on_scroll), NULL);
+    gtk_widget_add_controller(drawing_area, scroll);
+
+    // Drag (Rotate/Pan) - Right Button
+    GtkGesture *drag = gtk_gesture_drag_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), 3);
+    g_signal_connect(drag, "drag-begin", G_CALLBACK(on_drag_begin), NULL);
+    g_signal_connect(drag, "drag-update", G_CALLBACK(on_drag_update_handler), NULL);
+    gtk_widget_add_controller(drawing_area, GTK_EVENT_CONTROLLER(drag));
 
     return drawing_area;
 }

@@ -249,6 +249,11 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(cb_ecliptic, "toggled", G_CALLBACK(on_toggle_ecliptic), NULL);
     gtk_box_append(GTK_BOX(toggle_box), cb_ecliptic);
 
+    // Reset View Button
+    GtkWidget *btn_reset = gtk_button_new_with_label("Reset View");
+    g_signal_connect(btn_reset, "clicked", G_CALLBACK(sky_view_reset_view), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), btn_reset);
+
     // Status Label
     gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 3, 2, 1);
 
