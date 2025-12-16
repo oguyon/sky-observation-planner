@@ -6,6 +6,7 @@
 #include "sky_model.h"
 #include "sky_view.h"
 #include "elevation_view.h"
+#include "source_selection.h"
 
 // Site Definition
 typedef struct {
@@ -56,7 +57,14 @@ void on_sky_click(double alt, double az) {
     struct ln_equ_posn equ;
     ln_get_equ_from_hrz(&hrz, &observer, JD, &equ);
 
-    elevation_view_set_selected(equ.ra, equ.dec);
+    // Instead of setting selected directly, open Source Selection
+    // Need parent window? GtkApplicationWindow is not globally accessible here easily.
+    // However, transient_for can be NULL or we can find it.
+    // Let's assume NULL parent for now (toplevel) or find active window.
+
+    // Get active window from application? Main is local.
+    // Use NULL parent, GTK handles it.
+    show_source_selection_dialog(NULL, equ.ra, equ.dec, &loc, &dt);
 }
 
 // Callback from elevation view
@@ -195,7 +203,9 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Date:"), 0, 1, 1, 1);
 
     GtkWidget *date_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    GtkWidget *lbl_date_value = gtk_label_new("2024-01-01"); // Init value
+    char date_buf[32];
+    sprintf(date_buf, "%04d-%02d-%02d", dt.year, dt.month, dt.day);
+    GtkWidget *lbl_date_value = gtk_label_new(date_buf);
     GtkWidget *cal_button = gtk_menu_button_new();
     gtk_menu_button_set_label(GTK_MENU_BUTTON(cal_button), "Select");
 

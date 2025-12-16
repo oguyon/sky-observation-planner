@@ -43,6 +43,8 @@ add_executable(night_sky
     sky_model.c
     sky_view.c
     elevation_view.c
+    target_list.c
+    source_selection.c
 )
 
 target_link_libraries(night_sky

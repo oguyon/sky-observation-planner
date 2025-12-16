@@ -1,4 +1,5 @@
 #include "elevation_view.h"
+#include "target_list.h"
 #include <math.h>
 #include <stdio.h>
 #include <time.h> // For mktime
@@ -9,9 +10,15 @@ static GtkWidget *drawing_area;
 static GtkLabel *status_label = NULL;
 static TimeSelectedCallback time_callback = NULL;
 
-static int has_selection = 0;
-static double selected_ra = 0;
-static double selected_dec = 0;
+static int has_selection = 0; // Legacy support or replaced by target list?
+// User said "Maintain a target list. Display the elevation curve for each of the targets"
+// I will ignore the single selection API or keep it as legacy for click-to-view if needed.
+// But the requirement says "add to target list".
+// Let's assume `elevation_view_set_selected` is no longer the primary way, or adds to the list?
+// The prompt implies `set_selected` was the old way.
+// I will modify `elevation_view_set_selected` to ADD to the list or just ignore it if the user wants strict list mode.
+// Actually, I'll iterate `target_list` AND draw `selected` if it exists separately?
+// No, simpler to just iterate target list.
 
 // Helper to add hours to a DateTime
 static DateTime add_hours(DateTime dt, double hours) {
@@ -245,13 +252,10 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     cairo_set_line_width(cr, 1.5);
 
-    // Plot Objects
-    for (int obj = 0; obj < 3; obj++) {
-        if (obj == 2 && !has_selection) continue;
-
+    // Plot Objects (Sun, Moon)
+    for (int obj = 0; obj < 2; obj++) {
         if (obj == 0) cairo_set_source_rgb(cr, 1, 0.8, 0); // Sun Yellow
-        else if (obj == 1) cairo_set_source_rgb(cr, 0.8, 0.8, 0.8); // Moon White/Grey (Brighter for visibility on dark)
-        else cairo_set_source_rgb(cr, 1, 0, 0); // Selected Red
+        else cairo_set_source_rgb(cr, 0.8, 0.8, 0.8); // Moon White/Grey
 
         int first = 1;
         for (double h = -8.0; h <= 8.0; h += 0.166666) {
@@ -259,8 +263,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
             double alt = 0, az = 0;
             if (obj == 0) get_sun_position(*current_loc, t, &alt, &az);
-            else if (obj == 1) get_moon_position(*current_loc, t, &alt, &az);
-            else get_horizontal_coordinates(selected_ra, selected_dec, *current_loc, t, &alt, &az);
+            else get_moon_position(*current_loc, t, &alt, &az);
 
             double x = margin_left + (h + 8.0) / 16.0 * graph_w;
             double y = DEG_TO_Y(alt);
@@ -273,6 +276,37 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             }
         }
         cairo_stroke(cr);
+    }
+
+    // Plot Targets
+    int cnt = target_list_get_count();
+    for (int i=0; i<cnt; i++) {
+        Target *tgt = target_list_get(i);
+        cairo_set_source_rgb(cr, 1, 0.3, 0.3); // Light Red
+
+        int first = 1;
+        for (double h = -8.0; h <= 8.0; h += 0.166666) {
+            DateTime t = add_hours(center_time, h);
+            double alt, az;
+            get_horizontal_coordinates(tgt->ra, tgt->dec, *current_loc, t, &alt, &az);
+
+            double x = margin_left + (h + 8.0) / 16.0 * graph_w;
+            double y = DEG_TO_Y(alt);
+
+            if (first) {
+                cairo_move_to(cr, x, y);
+                first = 0;
+            } else {
+                cairo_line_to(cr, x, y);
+            }
+        }
+        cairo_stroke(cr);
+
+        // Draw Label at center (Midnight)?
+        // Or at current time?
+        // Let's draw at current time (Now line) if visible, or peak?
+        // Simple: Draw at +4 hours?
+        // Let's draw at max elevation.
     }
 }
 
@@ -363,9 +397,9 @@ GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *label, T
 }
 
 void elevation_view_set_selected(double ra, double dec) {
-    selected_ra = ra;
-    selected_dec = dec;
-    has_selection = 1;
+    // Deprecated or can add to list?
+    // Let's add to list as "Selected"
+    target_list_add("Selected", ra, dec, 0);
     elevation_view_redraw();
 }
 

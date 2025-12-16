@@ -1,5 +1,6 @@
 #include "sky_view.h"
 #include "catalog.h"
+#include "target_list.h"
 #include <math.h>
 #include <stdio.h>
 #include <libnova/julian_day.h>
@@ -143,21 +144,15 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
         // Alt circles
         for (int alt = 30; alt < 90; alt += 30) {
-            // Draw circle in projection space, then transform?
-            // A circle in projection space (centered at Zenith) transforms to a circle.
-            // Radius r_alt.
-            // Center (0,0) -> (0, pan_y).
-            // Radius r_alt * zoom.
             double r_alt = 1.0 - alt / 90.0;
             double t_r = r_alt * view_zoom;
-            // Center is same as horizon center
+
+            cairo_new_path(cr);
             cairo_arc(cr, h_cx, h_cy, t_r, 0, 2 * M_PI);
             cairo_stroke(cr);
 
             // Label
             char buf[10]; sprintf(buf, "%d", alt);
-            // Where to put label? North line?
-            // Project point (Alt, Az=180) -> North
             double u, v;
             project(alt, 180 + 180, &u, &v);
             double tx, ty;
@@ -170,7 +165,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         for (int az = 0; az < 360; az += 45) {
             double u, v;
             // Zenith
-            project(90, az, &u, &v); // (0,0)
+            project(90, az, &u, &v);
             double tx1, ty1;
             transform_point(u, v, &tx1, &ty1);
 
@@ -179,6 +174,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             double tx2, ty2;
             transform_point(u, v, &tx2, &ty2);
 
+            cairo_new_path(cr);
             cairo_move_to(cr, cx + tx1 * radius, cy + ty1 * radius);
             cairo_line_to(cr, cx + tx2 * radius, cy + ty2 * radius);
             cairo_stroke(cr);
@@ -343,6 +339,29 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                 cairo_move_to(cr, cx + tx * radius + 4, cy + ty * radius);
                 cairo_show_text(cr, p_names[p]);
             }
+        }
+    }
+
+    // Draw Targets
+    int cnt = target_list_get_count();
+    for (int i=0; i<cnt; i++) {
+        Target *tgt = target_list_get(i);
+        double alt, az;
+        get_horizontal_coordinates(tgt->ra, tgt->dec, *current_loc, *current_dt, &alt, &az);
+
+        double u, v;
+        if (project(alt, az + 180.0, &u, &v)) {
+            double tx, ty;
+            transform_point(u, v, &tx, &ty);
+
+            // Light Red Circle
+            cairo_set_source_rgb(cr, 1.0, 0.3, 0.3);
+            cairo_arc(cr, cx + tx * radius, cy + ty * radius, 6, 0, 2 * M_PI);
+            cairo_stroke(cr);
+
+            // Label
+            cairo_move_to(cr, cx + tx * radius + 8, cy + ty * radius);
+            cairo_show_text(cr, tgt->name);
         }
     }
 
