@@ -40,7 +40,8 @@ SkyViewOptions sky_options = {
     .show_ecliptic = FALSE,
     .star_mag_limit = 6.0,
     .star_size_m0 = 8.0,
-    .star_size_ma = 1.0
+    .star_size_ma = 1.0,
+    .show_star_colors = FALSE
 };
 
 // UI Widgets for Target List
@@ -166,6 +167,11 @@ static void on_toggle_moon_circles(GtkCheckButton *source, gpointer user_data) {
 }
 static void on_toggle_ecliptic(GtkCheckButton *source, gpointer user_data) {
     sky_options.show_ecliptic = gtk_check_button_get_active(source);
+    sky_view_redraw();
+}
+
+static void on_toggle_star_colors(GtkCheckButton *source, gpointer user_data) {
+    sky_options.show_star_colors = gtk_check_button_get_active(source);
     sky_view_redraw();
 }
 
@@ -340,6 +346,11 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ecliptic), sky_options.show_ecliptic);
     g_signal_connect(cb_ecliptic, "toggled", G_CALLBACK(on_toggle_ecliptic), NULL);
     gtk_box_append(GTK_BOX(toggle_box), cb_ecliptic);
+
+    GtkWidget *cb_colors = gtk_check_button_new_with_label("Star Colors");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_colors), sky_options.show_star_colors);
+    g_signal_connect(cb_colors, "toggled", G_CALLBACK(on_toggle_star_colors), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), cb_colors);
 
     GtkWidget *btn_reset = gtk_button_new_with_label("Reset View");
     g_signal_connect(btn_reset, "clicked", G_CALLBACK(sky_view_reset_view), NULL);

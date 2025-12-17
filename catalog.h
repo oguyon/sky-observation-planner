@@ -7,6 +7,7 @@ typedef struct {
     double ra; // degrees
     double dec; // degrees
     double mag;
+    double bv; // B-V Color Index
     const char *id; // Can be null or numeric id as string
 } Star;
 

@@ -32,22 +32,18 @@ static int parse_hip_line(char *line, Star *s) {
     char vmag_str[16] = {0};
     char ra_str[32] = {0};
     char dec_str[32] = {0};
+    char bv_str[16] = {0};
 
     while (*ptr) {
         if (*ptr == '|') {
             *ptr = '\0';
-            // Process field at field_start
-            // Based on visual inspection: H|HIP|Proxy|RAhms|DEdms|Vmag|Var|Src|RAdeg|DEdeg|...
             // Indices (1-based token):
-            // 1: H
-            // 2: HIP
-            // 6: Vmag
-            // 9: RAdeg
-            // 10: DEdeg
+            // 1: H, 2: HIP, 6: Vmag, 9: RAdeg, 10: DEdeg, 38: B-V
             if (field_idx == 2) strncpy(hip_str, field_start, 15);
             else if (field_idx == 6) strncpy(vmag_str, field_start, 15);
             else if (field_idx == 9) strncpy(ra_str, field_start, 31);
             else if (field_idx == 10) strncpy(dec_str, field_start, 31);
+            else if (field_idx == 38) strncpy(bv_str, field_start, 15);
 
             field_start = ptr + 1;
             field_idx++;
@@ -85,6 +81,10 @@ static int parse_hip_line(char *line, Star *s) {
     // Mag
     if (vmag_str[0]) s->mag = atof(vmag_str);
     else s->mag = 100.0; // Unknown/Dim
+
+    // B-V
+    if (bv_str[0]) s->bv = atof(bv_str);
+    else s->bv = 0.5; // Default white-ish
 
     // RA/Dec
     s->ra = atof(ra_str);

@@ -15,6 +15,7 @@ typedef struct {
     double star_mag_limit;
     double star_size_m0;
     double star_size_ma;
+    gboolean show_star_colors;
 } SkyViewOptions;
 
 GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double alt, double az));
