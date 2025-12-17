@@ -308,10 +308,13 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     // Draw Stars
     cairo_set_source_rgb(cr, 1, 1, 1);
-    int stars_drawn_count = 0;
+    int stars_total_brighter = 0;
+    int stars_visible_in_view = 0;
+
     if (stars) {
         for (int i = 0; i < num_stars; i++) {
             if (stars[i].mag > current_options->star_mag_limit) continue;
+            stars_total_brighter++;
 
             double alt, az;
             get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
@@ -320,22 +323,48 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                 double tx, ty;
                 transform_point(u, v, &tx, &ty);
 
+                double px = cx + tx * radius;
+                double py = cy + ty * radius;
+
+                // Check if inside view
+                if (px >= 0 && px <= width && py >= 0 && py <= height) {
+                    stars_visible_in_view++;
+                }
+
                 double size = (current_options->star_size_m0 - stars[i].mag) * current_options->star_size_ma;
                 if (size < 1.0) size = 1.0;
 
                 cairo_new_path(cr);
-                cairo_arc(cr, cx + tx * radius, cy + ty * radius, size, 0, 2 * M_PI);
+                cairo_arc(cr, px, py, size, 0, 2 * M_PI);
                 cairo_fill(cr);
-                stars_drawn_count++;
             }
         }
     }
 
-    // Draw star count
-    char count_buf[32];
-    snprintf(count_buf, 32, "Stars: %d", stars_drawn_count);
+    // Draw star count box
+    char count_buf[64];
+    snprintf(count_buf, 64, "Stars: %d / %d", stars_visible_in_view, stars_total_brighter);
+
+    cairo_text_extents_t ext;
+    cairo_text_extents(cr, count_buf, &ext);
+
+    double box_x = 10;
+    double box_y = height - 10 - ext.height - 10;
+    double box_w = ext.width + 20;
+    double box_h = ext.height + 20;
+
+    // Background
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_rectangle(cr, box_x, box_y, box_w, box_h);
+    cairo_fill_preserve(cr);
+
+    // Outline
     cairo_set_source_rgb(cr, 1, 1, 1);
-    cairo_move_to(cr, 10, height - 10);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    // Text
+    cairo_move_to(cr, box_x + 10, box_y + 10 + ext.height);
     cairo_show_text(cr, count_buf);
 
     // Draw Planets

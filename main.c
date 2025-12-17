@@ -355,6 +355,8 @@ static void activate(GtkApplication *app, gpointer user_data) {
     // Mag Limit
     gtk_box_append(GTK_BOX(star_box), gtk_label_new("Mag Limit:"));
     GtkWidget *scale_limit = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 15.0, 0.1);
+    gtk_scale_set_draw_value(GTK_SCALE(scale_limit), TRUE);
+    gtk_scale_set_value_pos(GTK_SCALE(scale_limit), GTK_POS_RIGHT);
     gtk_range_set_value(GTK_RANGE(scale_limit), sky_options.star_mag_limit);
     g_signal_connect(scale_limit, "value-changed", G_CALLBACK(on_mag_limit_changed), NULL);
     gtk_box_append(GTK_BOX(star_box), scale_limit);
@@ -362,6 +364,8 @@ static void activate(GtkApplication *app, gpointer user_data) {
     // M0
     gtk_box_append(GTK_BOX(star_box), gtk_label_new("Spot Size M0:"));
     GtkWidget *scale_m0 = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 20.0, 0.1);
+    gtk_scale_set_draw_value(GTK_SCALE(scale_m0), TRUE);
+    gtk_scale_set_value_pos(GTK_SCALE(scale_m0), GTK_POS_RIGHT);
     gtk_range_set_value(GTK_RANGE(scale_m0), sky_options.star_size_m0);
     g_signal_connect(scale_m0, "value-changed", G_CALLBACK(on_m0_changed), NULL);
     gtk_box_append(GTK_BOX(star_box), scale_m0);
@@ -369,6 +373,8 @@ static void activate(GtkApplication *app, gpointer user_data) {
     // MA
     gtk_box_append(GTK_BOX(star_box), gtk_label_new("Spot Size MA:"));
     GtkWidget *scale_ma = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.1, 5.0, 0.1);
+    gtk_scale_set_draw_value(GTK_SCALE(scale_ma), TRUE);
+    gtk_scale_set_value_pos(GTK_SCALE(scale_ma), GTK_POS_RIGHT);
     gtk_range_set_value(GTK_RANGE(scale_ma), sky_options.star_size_ma);
     g_signal_connect(scale_ma, "value-changed", G_CALLBACK(on_ma_changed), NULL);
     gtk_box_append(GTK_BOX(star_box), scale_ma);
