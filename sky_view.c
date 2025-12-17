@@ -31,6 +31,10 @@ void sky_view_reset_view() {
     sky_view_redraw();
 }
 
+double sky_view_get_zoom() {
+    return view_zoom;
+}
+
 // Helper to project Alt/Az to X/Y (0-1 range from center)
 // Returns 1 if valid (above horizon), 0 otherwise
 static int project(double alt, double az, double *x, double *y) {
@@ -81,18 +85,14 @@ static void draw_text_centered(cairo_t *cr, double x, double y, const char *text
 
 // Simple B-V to RGB mapping
 static void bv_to_rgb(double bv, double *r, double *g, double *b) {
-    // Approximate mapping
     if (bv < 0.0) { *r = 0.6; *g = 0.6; *b = 1.0; } // Blue
     else if (bv < 0.5) {
-        // Interpolate Blue to White
         double t = bv / 0.5;
         *r = 0.6 + 0.4*t; *g = 0.6 + 0.4*t; *b = 1.0;
     } else if (bv < 1.0) {
-        // Interpolate White to Yellow
         double t = (bv - 0.5) / 0.5;
         *r = 1.0; *g = 1.0; *b = 1.0 - 0.5*t;
     } else if (bv < 1.5) {
-        // Interpolate Yellow to Red/Orange
         double t = (bv - 1.0) / 0.5;
         *r = 1.0; *g = 1.0 - 0.4*t; *b = 0.5 - 0.5*t;
     } else {
@@ -104,6 +104,17 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     double radius = (width < height ? width : height) / 2.0 - 10;
     double cx = width / 2.0;
     double cy = height / 2.0;
+
+    // Calculate effective star settings
+    double effective_limit = current_options->star_mag_limit;
+    double effective_m0 = current_options->star_size_m0;
+    double effective_ma = current_options->star_size_ma;
+
+    if (current_options->auto_star_settings) {
+        effective_limit = 8.0 + view_zoom;
+        effective_m0 = 7.0 + 0.5 * view_zoom;
+        effective_ma = 0.4 + 0.1 * view_zoom;
+    }
 
     cairo_set_source_rgb(cr, 0, 0, 0);
     cairo_paint(cr);
@@ -244,7 +255,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     if (stars) {
         for (int i = 0; i < num_stars; i++) {
-            if (stars[i].mag > current_options->star_mag_limit) continue;
+            if (stars[i].mag > effective_limit) continue;
             stars_total_brighter++;
 
             double alt, az;
@@ -261,13 +272,13 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                     stars_visible_in_view++;
                 }
 
-                double calc_size = (current_options->star_size_m0 - stars[i].mag) * current_options->star_size_ma;
+                double calc_size = (effective_m0 - stars[i].mag) * effective_ma;
                 // If smaller than 1.0, clamp to 1.0 and adjust color/alpha
                 double draw_size = calc_size;
                 double brightness = 1.0;
 
                 if (draw_size < 1.0) {
-                    brightness = draw_size; // Or draw_size^2 ? Linear is fine.
+                    brightness = draw_size;
                     if (brightness < 0.1) brightness = 0.1;
                     draw_size = 1.0;
                 }
@@ -275,6 +286,18 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                 if (current_options->show_star_colors) {
                     double r, g, b;
                     bv_to_rgb(stars[i].bv, &r, &g, &b);
+
+                    // Apply Saturation
+                    double sat = current_options->star_saturation;
+                    r = 1.0 + (r - 1.0) * sat;
+                    g = 1.0 + (g - 1.0) * sat;
+                    b = 1.0 + (b - 1.0) * sat;
+
+                    // Clamp
+                    if (r < 0) r = 0; if (r > 1) r = 1;
+                    if (g < 0) g = 0; if (g > 1) g = 1;
+                    if (b < 0) b = 0; if (b > 1) b = 1;
+
                     cairo_set_source_rgba(cr, r * brightness, g * brightness, b * brightness, 1.0);
                 } else {
                     cairo_set_source_rgba(cr, brightness, brightness, brightness, 1.0);

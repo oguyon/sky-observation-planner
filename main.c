@@ -38,14 +38,22 @@ SkyViewOptions sky_options = {
     .show_planets = FALSE,
     .show_moon_circles = FALSE,
     .show_ecliptic = FALSE,
-    .star_mag_limit = 6.0,
-    .star_size_m0 = 8.0,
-    .star_size_ma = 1.0,
-    .show_star_colors = FALSE
+    .star_mag_limit = 8.0, // Default requested
+    .star_size_m0 = 7.0, // Default requested
+    .star_size_ma = 0.4, // Default requested
+    .show_star_colors = FALSE,
+    .star_saturation = 1.0,
+    .auto_star_settings = TRUE // Default requested
 };
 
 // UI Widgets for Target List
 static GtkColumnView *target_list_view = NULL;
+
+// UI Widgets for Star Settings (needed for auto update?)
+static GtkRange *range_mag = NULL;
+static GtkRange *range_m0 = NULL;
+static GtkRange *range_ma = NULL;
+static GtkRange *range_sat = NULL;
 
 static void update_all_views() {
     sky_view_redraw();
@@ -175,6 +183,16 @@ static void on_toggle_star_colors(GtkCheckButton *source, gpointer user_data) {
     sky_view_redraw();
 }
 
+static void on_toggle_auto_star_settings(GtkCheckButton *source, gpointer user_data) {
+    sky_options.auto_star_settings = gtk_check_button_get_active(source);
+    // Enable/Disable sliders?
+    gboolean active = !sky_options.auto_star_settings;
+    if (range_mag) gtk_widget_set_sensitive(GTK_WIDGET(range_mag), active);
+    if (range_m0) gtk_widget_set_sensitive(GTK_WIDGET(range_m0), active);
+    if (range_ma) gtk_widget_set_sensitive(GTK_WIDGET(range_ma), active);
+    sky_view_redraw();
+}
+
 static void on_site_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
     GtkDropDown *dropdown = GTK_DROP_DOWN(object);
     guint selected = gtk_drop_down_get_selected(dropdown);
@@ -219,6 +237,11 @@ static void on_m0_changed(GtkRange *range, gpointer user_data) {
 
 static void on_ma_changed(GtkRange *range, gpointer user_data) {
     sky_options.star_size_ma = gtk_range_get_value(range);
+    sky_view_redraw();
+}
+
+static void on_saturation_changed(GtkRange *range, gpointer user_data) {
+    sky_options.star_saturation = gtk_range_get_value(range);
     sky_view_redraw();
 }
 
@@ -363,32 +386,54 @@ static void activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *star_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_expander_set_child(GTK_EXPANDER(star_expander), star_box);
 
+    // Auto Star Settings Toggle
+    GtkWidget *cb_auto = gtk_check_button_new_with_label("Auto Star Settings");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_auto), sky_options.auto_star_settings);
+    g_signal_connect(cb_auto, "toggled", G_CALLBACK(on_toggle_auto_star_settings), NULL);
+    gtk_box_append(GTK_BOX(star_box), cb_auto);
+
     // Mag Limit
     gtk_box_append(GTK_BOX(star_box), gtk_label_new("Mag Limit:"));
     GtkWidget *scale_limit = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 15.0, 0.1);
+    range_mag = GTK_RANGE(scale_limit);
     gtk_scale_set_draw_value(GTK_SCALE(scale_limit), TRUE);
     gtk_scale_set_value_pos(GTK_SCALE(scale_limit), GTK_POS_RIGHT);
     gtk_range_set_value(GTK_RANGE(scale_limit), sky_options.star_mag_limit);
     g_signal_connect(scale_limit, "value-changed", G_CALLBACK(on_mag_limit_changed), NULL);
+    gtk_widget_set_sensitive(scale_limit, !sky_options.auto_star_settings);
     gtk_box_append(GTK_BOX(star_box), scale_limit);
 
     // M0
     gtk_box_append(GTK_BOX(star_box), gtk_label_new("Spot Size M0:"));
     GtkWidget *scale_m0 = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 20.0, 0.1);
+    range_m0 = GTK_RANGE(scale_m0);
     gtk_scale_set_draw_value(GTK_SCALE(scale_m0), TRUE);
     gtk_scale_set_value_pos(GTK_SCALE(scale_m0), GTK_POS_RIGHT);
     gtk_range_set_value(GTK_RANGE(scale_m0), sky_options.star_size_m0);
     g_signal_connect(scale_m0, "value-changed", G_CALLBACK(on_m0_changed), NULL);
+    gtk_widget_set_sensitive(scale_m0, !sky_options.auto_star_settings);
     gtk_box_append(GTK_BOX(star_box), scale_m0);
 
     // MA
     gtk_box_append(GTK_BOX(star_box), gtk_label_new("Spot Size MA:"));
     GtkWidget *scale_ma = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.1, 5.0, 0.1);
+    range_ma = GTK_RANGE(scale_ma);
     gtk_scale_set_draw_value(GTK_SCALE(scale_ma), TRUE);
     gtk_scale_set_value_pos(GTK_SCALE(scale_ma), GTK_POS_RIGHT);
     gtk_range_set_value(GTK_RANGE(scale_ma), sky_options.star_size_ma);
     g_signal_connect(scale_ma, "value-changed", G_CALLBACK(on_ma_changed), NULL);
+    gtk_widget_set_sensitive(scale_ma, !sky_options.auto_star_settings);
     gtk_box_append(GTK_BOX(star_box), scale_ma);
+
+    // Saturation
+    gtk_box_append(GTK_BOX(star_box), gtk_label_new("Color Saturation:"));
+    GtkWidget *scale_sat = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 3.0, 0.1);
+    range_sat = GTK_RANGE(scale_sat);
+    gtk_scale_set_draw_value(GTK_SCALE(scale_sat), TRUE);
+    gtk_scale_set_value_pos(GTK_SCALE(scale_sat), GTK_POS_RIGHT);
+    gtk_range_set_value(GTK_RANGE(scale_sat), sky_options.star_saturation);
+    g_signal_connect(scale_sat, "value-changed", G_CALLBACK(on_saturation_changed), NULL);
+    gtk_box_append(GTK_BOX(star_box), scale_sat);
 
     // Status Label
     gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 4, 2, 1);

@@ -475,6 +475,11 @@ void show_source_selection_dialog(GtkWindow *parent, double ra, double dec, Loca
     roi.active = 0;
     selected_candidate_index = -1;
 
+    // Initial search radius based on zoom
+    double zoom = sky_view_get_zoom();
+    if (zoom > 0) search_fov = 10.0 / zoom;
+    else search_fov = 10.0;
+
     GtkWidget *dialog = gtk_window_new();
     gtk_window_set_transient_for(GTK_WINDOW(dialog), parent);
     gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);

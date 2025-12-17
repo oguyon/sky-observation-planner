@@ -16,11 +16,14 @@ typedef struct {
     double star_size_m0;
     double star_size_ma;
     gboolean show_star_colors;
+    double star_saturation;
+    gboolean auto_star_settings;
 } SkyViewOptions;
 
 GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double alt, double az));
 void sky_view_redraw();
 void sky_view_reset_view();
 void sky_view_set_highlighted_target(int index);
+double sky_view_get_zoom();
 
 #endif
