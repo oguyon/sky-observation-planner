@@ -463,6 +463,33 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         cairo_move_to(cr, box_x + 10, box_y + 10 + ext.height);
         cairo_show_text(cr, count_buf);
     }
+
+    // Zoom and FOV Info (Bottom Right)
+    {
+        double fov = 180.0 / view_zoom;
+        char info_buf[64];
+        snprintf(info_buf, 64, "Zoom: %.2f | FOV: %.1f%s", view_zoom, fov, "\u00B0"); // degree symbol
+
+        cairo_set_font_size(cr, 12);
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, info_buf, &ext);
+
+        double box_w = ext.width + 20;
+        double box_h = ext.height + 20;
+        double box_x = width - 10 - box_w;
+        double box_y = height - 10 - box_h;
+
+        cairo_set_source_rgb(cr, 0, 0, 0);
+        cairo_rectangle(cr, box_x, box_y, box_w, box_h);
+        cairo_fill_preserve(cr);
+
+        cairo_set_source_rgb(cr, 1, 1, 1);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+
+        cairo_move_to(cr, box_x + 10, box_y + 10 + ext.height);
+        cairo_show_text(cr, info_buf);
+    }
 }
 
 static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
