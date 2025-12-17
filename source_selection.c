@@ -459,19 +459,24 @@ static void on_clear_roi_clicked(GtkButton *btn, gpointer user_data) {
     gtk_widget_queue_draw(plot_area);
 }
 
+static TargetList *dlg_target_list;
+
 static void on_add_target_clicked(GtkButton *btn, gpointer user_data) {
     if (selected_candidate_index >= 0 && selected_candidate_index < candidate_count) {
-        target_list_add(candidates[selected_candidate_index].name, candidates[selected_candidate_index].ra, candidates[selected_candidate_index].dec, candidates[selected_candidate_index].mag);
-        sky_view_redraw();
-        elevation_view_redraw();
+        if (dlg_target_list) {
+            target_list_add_target(dlg_target_list, candidates[selected_candidate_index].name, candidates[selected_candidate_index].ra, candidates[selected_candidate_index].dec, candidates[selected_candidate_index].mag);
+            sky_view_redraw();
+            elevation_view_redraw();
+        }
     }
 }
 
-void show_source_selection_dialog(GtkWindow *parent, double ra, double dec, Location *loc, DateTime *dt) {
+void show_source_selection_dialog(GtkWindow *parent, double ra, double dec, Location *loc, DateTime *dt, TargetList *target_list) {
     center_ra = ra;
     center_dec = dec;
     dlg_loc = loc;
     dlg_dt = dt;
+    dlg_target_list = target_list;
     roi.active = 0;
     selected_candidate_index = -1;
 

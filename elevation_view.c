@@ -9,10 +9,10 @@ static DateTime *current_dt;
 static GtkWidget *drawing_area;
 static GtkLabel *status_label = NULL;
 static TimeSelectedCallback time_callback = NULL;
-static int highlighted_target_index = -1;
+static Target *highlighted_target = NULL;
 
-void elevation_view_set_highlighted_target(int index) {
-    highlighted_target_index = index;
+void elevation_view_set_highlighted_target(Target *target) {
+    highlighted_target = target;
     elevation_view_redraw();
 }
 
@@ -275,40 +275,39 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     }
 
     // Plot Targets
-    int cnt = target_list_get_count();
-    for (int i=0; i<cnt; i++) {
-        Target *tgt = target_list_get(i);
-        if (i == highlighted_target_index) {
-            cairo_set_source_rgb(cr, 0.0, 1.0, 1.0); // Cyan
-            cairo_set_line_width(cr, 3.0);
-        } else {
-            cairo_set_source_rgb(cr, 1, 0.3, 0.3); // Light Red
-            cairo_set_line_width(cr, 1.5);
-        }
+    int num_lists = target_list_get_list_count();
+    for (int l = 0; l < num_lists; l++) {
+        TargetList *tl = target_list_get_list_by_index(l);
+        int cnt = target_list_get_count(tl);
+        for (int i=0; i<cnt; i++) {
+            Target *tgt = target_list_get_target(tl, i);
 
-        int first = 1;
-        for (double h = -8.0; h <= 8.0; h += 0.166666) {
-            DateTime t = add_hours(center_time, h);
-            double alt, az;
-            get_horizontal_coordinates(tgt->ra, tgt->dec, *current_loc, t, &alt, &az);
-
-            double x = margin_left + (h + 8.0) / 16.0 * graph_w;
-            double y = DEG_TO_Y(alt);
-
-            if (first) {
-                cairo_move_to(cr, x, y);
-                first = 0;
+            if (tgt == highlighted_target) {
+                cairo_set_source_rgb(cr, 0.0, 1.0, 1.0); // Cyan
+                cairo_set_line_width(cr, 3.0);
             } else {
-                cairo_line_to(cr, x, y);
+                cairo_set_source_rgb(cr, 1, 0.3, 0.3); // Light Red
+                cairo_set_line_width(cr, 1.5);
             }
-        }
-        cairo_stroke(cr);
 
-        // Draw Label at center (Midnight)?
-        // Or at current time?
-        // Let's draw at current time (Now line) if visible, or peak?
-        // Simple: Draw at +4 hours?
-        // Let's draw at max elevation.
+            int first = 1;
+            for (double h = -8.0; h <= 8.0; h += 0.166666) {
+                DateTime t = add_hours(center_time, h);
+                double alt, az;
+                get_horizontal_coordinates(tgt->ra, tgt->dec, *current_loc, t, &alt, &az);
+
+                double x = margin_left + (h + 8.0) / 16.0 * graph_w;
+                double y = DEG_TO_Y(alt);
+
+                if (first) {
+                    cairo_move_to(cr, x, y);
+                    first = 0;
+                } else {
+                    cairo_line_to(cr, x, y);
+                }
+            }
+            cairo_stroke(cr);
+        }
     }
 }
 
@@ -399,9 +398,9 @@ GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *label, T
 }
 
 void elevation_view_set_selected(double ra, double dec) {
-    // Deprecated or can add to list?
-    // Let's add to list as "Selected"
-    target_list_add("Selected", ra, dec, 0);
+    // Deprecated functionality if we don't have active list context here easily.
+    // Or we could pass it in.
+    // For now, let's disable adding targets from elevation view, or just redraw.
     elevation_view_redraw();
 }
 

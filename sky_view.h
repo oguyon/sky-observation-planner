@@ -3,6 +3,7 @@
 
 #include <gtk/gtk.h>
 #include "sky_model.h"
+#include "target_list.h"
 
 typedef struct {
     gboolean show_constellation_lines;
@@ -23,7 +24,7 @@ typedef struct {
 GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double alt, double az));
 void sky_view_redraw();
 void sky_view_reset_view();
-void sky_view_set_highlighted_target(int index);
+void sky_view_set_highlighted_target(Target *target);
 double sky_view_get_zoom();
 
 #endif

@@ -17,10 +17,10 @@ static double cursor_az = -1;
 static double view_zoom = 1.0;
 static double view_pan_x = 0.0; // Normalized units
 static double view_pan_y = 0.0; // Normalized units
-static int highlighted_target_index = -1;
+static Target *highlighted_target = NULL;
 
-void sky_view_set_highlighted_target(int index) {
-    highlighted_target_index = index;
+void sky_view_set_highlighted_target(Target *target) {
+    highlighted_target = target;
     sky_view_redraw();
 }
 
@@ -112,8 +112,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     if (current_options->auto_star_settings) {
         effective_limit = 8.0 + view_zoom;
-        effective_m0 = 6.0 + 0.3 * (view_zoom - 1.0);
-        effective_ma = 0.4 + 0.05 * (view_zoom - 1.0);
+        effective_m0 = 5.5 + 0.3 * sqrt(view_zoom);
+        effective_ma = 0.35 + 0.05 * sqrt(view_zoom);
     }
 
     cairo_set_source_rgb(cr, 0, 0, 0);
@@ -330,24 +330,30 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         }
     }
 
-    int cnt = target_list_get_count();
-    for (int i=0; i<cnt; i++) {
-        Target *tgt = target_list_get(i);
-        double alt, az, u, v, tx, ty;
-        get_horizontal_coordinates(tgt->ra, tgt->dec, *current_loc, *current_dt, &alt, &az);
-        if (project(alt, az + 180.0, &u, &v)) {
-            transform_point(u, v, &tx, &ty);
-            if (i == highlighted_target_index) {
-                cairo_set_source_rgb(cr, 0.0, 1.0, 1.0); cairo_set_line_width(cr, 3.0);
-            } else {
-                cairo_set_source_rgb(cr, 1.0, 0.3, 0.3); cairo_set_line_width(cr, 1.5);
+    int num_lists = target_list_get_list_count();
+    for (int l = 0; l < num_lists; l++) {
+        TargetList *tl = target_list_get_list_by_index(l);
+        int cnt = target_list_get_count(tl);
+        for (int i=0; i<cnt; i++) {
+            Target *tgt = target_list_get_target(tl, i);
+            double alt, az, u, v, tx, ty;
+            get_horizontal_coordinates(tgt->ra, tgt->dec, *current_loc, *current_dt, &alt, &az);
+            if (project(alt, az + 180.0, &u, &v)) {
+                transform_point(u, v, &tx, &ty);
+
+                if (tgt == highlighted_target) {
+                    cairo_set_source_rgb(cr, 0.0, 1.0, 1.0); cairo_set_line_width(cr, 3.0);
+                } else {
+                    cairo_set_source_rgb(cr, 1.0, 0.3, 0.3); cairo_set_line_width(cr, 1.5);
+                }
+
+                cairo_new_path(cr);
+                cairo_arc(cr, cx + tx * radius, cy + ty * radius, 6, 0, 2 * M_PI);
+                cairo_stroke(cr);
+                cairo_set_line_width(cr, 1.0);
+                cairo_move_to(cr, cx + tx * radius + 8, cy + ty * radius);
+                cairo_show_text(cr, tgt->name);
             }
-            cairo_new_path(cr);
-            cairo_arc(cr, cx + tx * radius, cy + ty * radius, 6, 0, 2 * M_PI);
-            cairo_stroke(cr);
-            cairo_set_line_width(cr, 1.0);
-            cairo_move_to(cr, cx + tx * radius + 8, cy + ty * radius);
-            cairo_show_text(cr, tgt->name);
         }
     }
 

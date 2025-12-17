@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include <gdk/gdk.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -47,7 +48,8 @@ SkyViewOptions sky_options = {
 };
 
 // UI Widgets for Target List
-static GtkColumnView *target_list_view = NULL;
+static GtkNotebook *target_notebook = NULL;
+static TargetList *active_target_list = NULL;
 
 // UI Widgets for Star Settings (needed for auto update?)
 static GtkRange *range_mag = NULL;
@@ -60,58 +62,75 @@ static void update_all_views() {
     elevation_view_redraw();
 }
 
+TargetList *get_active_target_list() {
+    return active_target_list;
+}
+
 static void on_target_selection_changed(GtkSelectionModel *model, guint position, guint n_items, gpointer user_data) {
     GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
     guint selected = gtk_single_selection_get_selected(sel);
 
-    int index = -1;
-    if (selected != GTK_INVALID_LIST_POSITION) {
-        index = (int)selected;
+    Target *target = NULL;
+    if (selected != GTK_INVALID_LIST_POSITION && active_target_list) {
+        target = target_list_get_target(active_target_list, (int)selected);
     }
 
-    sky_view_set_highlighted_target(index);
-    elevation_view_set_highlighted_target(index);
-}
-
-static void refresh_target_list_ui() {
-    if (!target_list_view) return;
-
-    // Rebuild the model.
-    int cnt = target_list_get_count();
-    const char **items = malloc(sizeof(char*) * (cnt + 1));
-    for (int i=0; i<cnt; i++) {
-        Target *t = target_list_get(i);
-        char *buf = malloc(128);
-        snprintf(buf, 128, "%s (RA:%.2f, Dec:%.2f)", t->name, t->ra, t->dec);
-        items[i] = buf;
-    }
-    items[cnt] = NULL;
-
-    GtkStringList *new_model = gtk_string_list_new(items);
-    GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(new_model));
-    g_signal_connect(sel, "selection-changed", G_CALLBACK(on_target_selection_changed), NULL);
-
-    gtk_column_view_set_model(target_list_view, GTK_SELECTION_MODEL(sel));
-
-    for (int i=0; i<cnt; i++) free((char*)items[i]);
-    free(items);
+    sky_view_set_highlighted_target(target);
+    elevation_view_set_highlighted_target(target);
 }
 
 // Callback from target_list module
 static void on_target_list_changed() {
-    refresh_target_list_ui();
     update_all_views();
-}
+    // We also need to refresh the current tab's list view, or all of them.
+    // Ideally we find the widget associated with the list and update it.
+    // For simplicity, we can just rebuild the current page's model if we can find it.
 
-static void on_delete_target_clicked(GtkButton *btn, gpointer user_data) {
-    if (!target_list_view) return;
-    GtkSelectionModel *model = gtk_column_view_get_model(target_list_view);
-    GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
-    guint pos = gtk_single_selection_get_selected(sel);
+    int pages = gtk_notebook_get_n_pages(target_notebook);
+    for (int i=0; i<pages; i++) {
+        GtkWidget *page = gtk_notebook_get_nth_page(target_notebook, i);
+        // The page child is a GtkScrolledWindow containing a GtkColumnView
+        GtkWidget *scrolled = gtk_widget_get_first_child(page); // Box -> Scrolled
+        // Wait, structure: Page is a Box. Box has ScrolledWindow.
+        // Let's rely on standard widget traversal or store references.
+        // To keep it simple: we can store the TargetList pointer in the page using g_object_set_data.
 
-    if (pos != GTK_INVALID_LIST_POSITION) {
-        target_list_remove(pos);
-        // refresh_target_list_ui will be called via callback
+        TargetList *tl = g_object_get_data(G_OBJECT(page), "target_list");
+        if (tl) {
+            // Find the column view
+            // Structure: Box -> ScrolledWindow -> ColumnView
+            GtkWidget *scrolled = gtk_widget_get_first_child(page);
+            while (scrolled && !GTK_IS_SCROLLED_WINDOW(scrolled)) {
+                 scrolled = gtk_widget_get_next_sibling(scrolled);
+            }
+            if (!scrolled) continue;
+
+            // GTK4 structure is ScrolledWindow -> Viewport -> ColumnView usually, or direct child?
+            // gtk_scrolled_window_get_child() returns the child.
+            GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+
+            if (GTK_IS_COLUMN_VIEW(col_view)) {
+                // Rebuild model
+                int cnt = target_list_get_count(tl);
+                const char **items = malloc(sizeof(char*) * (cnt + 1));
+                for (int k=0; k<cnt; k++) {
+                    Target *t = target_list_get_target(tl, k);
+                    char *buf = malloc(128);
+                    snprintf(buf, 128, "%s (RA:%.2f, Dec:%.2f)", t->name, t->ra, t->dec);
+                    items[k] = buf;
+                }
+                items[cnt] = NULL;
+
+                GtkStringList *new_model = gtk_string_list_new(items);
+                GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(new_model));
+                g_signal_connect(sel, "selection-changed", G_CALLBACK(on_target_selection_changed), NULL);
+
+                gtk_column_view_set_model(GTK_COLUMN_VIEW(col_view), GTK_SELECTION_MODEL(sel));
+
+                for (int k=0; k<cnt; k++) free((char*)items[k]);
+                free(items);
+            }
+        }
     }
 }
 
@@ -127,6 +146,231 @@ static void target_list_bind_cb(GtkSignalListItemFactory *self, GtkListItem *lis
     gtk_label_set_text(GTK_LABEL(label), gtk_string_object_get_string(strobj));
 }
 
+// Helper to create a view for a list
+static GtkWidget *create_view_for_list(TargetList *list) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    g_object_set_data(G_OBJECT(box), "target_list", list); // Store reference
+
+    GtkWidget *scrolled_list = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scrolled_list, TRUE);
+    gtk_box_append(GTK_BOX(box), scrolled_list);
+
+    GtkColumnView *col_view = GTK_COLUMN_VIEW(gtk_column_view_new(NULL));
+    gtk_widget_set_vexpand(GTK_WIDGET(col_view), TRUE);
+    gtk_widget_set_hexpand(GTK_WIDGET(col_view), TRUE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_list), GTK_WIDGET(col_view));
+
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(target_list_setup_cb), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(target_list_bind_cb), NULL);
+    GtkColumnViewColumn *col = gtk_column_view_column_new("Target", factory);
+    gtk_column_view_append_column(col_view, col);
+
+    return box;
+}
+
+static void refresh_tabs() {
+    // Rebuild tabs? Or just add missing ones?
+    // Simplest: Remove all, add all.
+    int n_pages = gtk_notebook_get_n_pages(target_notebook);
+    for (int i=n_pages-1; i>=0; i--) {
+        gtk_notebook_remove_page(target_notebook, i);
+    }
+
+    int count = target_list_get_list_count();
+    for (int i=0; i<count; i++) {
+        TargetList *tl = target_list_get_list_by_index(i);
+        GtkWidget *page = create_view_for_list(tl);
+        gtk_notebook_append_page(target_notebook, page, gtk_label_new(target_list_get_name(tl)));
+    }
+    on_target_list_changed(); // Populate data
+
+    // Restore active list if possible
+    if (count > 0) {
+         if (active_target_list) {
+             // Find index
+             for(int i=0; i<count; i++) {
+                 if(target_list_get_list_by_index(i) == active_target_list) {
+                     gtk_notebook_set_current_page(target_notebook, i);
+                     break;
+                 }
+             }
+         } else {
+             active_target_list = target_list_get_list_by_index(0);
+         }
+    } else {
+        active_target_list = NULL;
+    }
+}
+
+static void on_notebook_switch_page(GtkNotebook *notebook, GtkWidget *page, guint page_num, gpointer user_data) {
+    TargetList *tl = g_object_get_data(G_OBJECT(page), "target_list");
+    active_target_list = tl;
+}
+
+// Dialog for New List
+static void on_new_list_response(GtkDialog *dialog, int response_id, gpointer user_data) {
+    if (response_id == GTK_RESPONSE_OK) {
+        GtkEntry *entry = GTK_ENTRY(user_data);
+        const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+        if (text && strlen(text) > 0) {
+            target_list_create(text);
+            refresh_tabs();
+            // Switch to new tab
+            int count = target_list_get_list_count();
+            gtk_notebook_set_current_page(target_notebook, count-1);
+        }
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+static void on_new_list_clicked(GtkButton *btn, gpointer user_data) {
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("New Target List", GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))),
+                                                    GTK_DIALOG_MODAL,
+                                                    "Cancel", GTK_RESPONSE_CANCEL,
+                                                    "Create", GTK_RESPONSE_OK,
+                                                    NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_widget_set_margin_top(box, 10);
+    gtk_widget_set_margin_bottom(box, 10);
+    gtk_widget_set_margin_start(box, 10);
+    gtk_widget_set_margin_end(box, 10);
+    gtk_box_append(GTK_BOX(content), box);
+
+    gtk_box_append(GTK_BOX(box), gtk_label_new("Name:"));
+    GtkWidget *entry = gtk_entry_new();
+    gtk_box_append(GTK_BOX(box), entry);
+
+    g_signal_connect(dialog, "response", G_CALLBACK(on_new_list_response), entry);
+    gtk_widget_show(dialog);
+}
+
+// Delete Selected Target
+static void on_delete_target_clicked(GtkButton *btn, gpointer user_data) {
+    if (!active_target_list) return;
+
+    GtkWidget *page = gtk_notebook_get_nth_page(target_notebook, gtk_notebook_get_current_page(target_notebook));
+    GtkWidget *scrolled = gtk_widget_get_first_child(page);
+    while (scrolled && !GTK_IS_SCROLLED_WINDOW(scrolled)) scrolled = gtk_widget_get_next_sibling(scrolled);
+    if (!scrolled) return;
+
+    GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+    GtkSelectionModel *model = gtk_column_view_get_model(GTK_COLUMN_VIEW(col_view));
+    GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
+    guint pos = gtk_single_selection_get_selected(sel);
+
+    if (pos != GTK_INVALID_LIST_POSITION) {
+        target_list_remove_target(active_target_list, pos);
+    }
+}
+
+// Save/Load
+static void on_save_list_response(GtkDialog *dialog, int response, gpointer user_data) {
+    if (response == GTK_RESPONSE_ACCEPT) {
+        GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
+        GFile *file = gtk_file_chooser_get_file(chooser);
+        char *filename = g_file_get_path(file);
+        if (active_target_list && filename) {
+            target_list_save(active_target_list, filename);
+        }
+        g_free(filename);
+        g_object_unref(file);
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+static void on_save_list_clicked(GtkButton *btn, gpointer user_data) {
+    if (!active_target_list) return;
+    GtkWidget *dialog = gtk_file_chooser_dialog_new("Save Target List",
+                                      GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))),
+                                      GTK_FILE_CHOOSER_ACTION_SAVE,
+                                      "_Cancel", GTK_RESPONSE_CANCEL,
+                                      "_Save", GTK_RESPONSE_ACCEPT,
+                                      NULL);
+    g_signal_connect(dialog, "response", G_CALLBACK(on_save_list_response), NULL);
+    gtk_widget_show(dialog);
+}
+
+static void on_load_list_response(GtkDialog *dialog, int response, gpointer user_data) {
+    if (response == GTK_RESPONSE_ACCEPT) {
+        GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
+        GFile *file = gtk_file_chooser_get_file(chooser);
+        char *filename = g_file_get_path(file);
+        if (filename) {
+            TargetList *tl = target_list_load(filename);
+            if (tl) {
+                refresh_tabs();
+                // Switch to new list
+                int count = target_list_get_list_count();
+                gtk_notebook_set_current_page(target_notebook, count-1);
+            }
+        }
+        g_free(filename);
+        g_object_unref(file);
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+static void on_load_list_clicked(GtkButton *btn, gpointer user_data) {
+    GtkWidget *dialog = gtk_file_chooser_dialog_new("Load Target List",
+                                      GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))),
+                                      GTK_FILE_CHOOSER_ACTION_OPEN,
+                                      "_Cancel", GTK_RESPONSE_CANCEL,
+                                      "_Open", GTK_RESPONSE_ACCEPT,
+                                      NULL);
+    g_signal_connect(dialog, "response", G_CALLBACK(on_load_list_response), NULL);
+    gtk_widget_show(dialog);
+}
+
+// Copy/Paste
+static void on_copy_targets_clicked(GtkButton *btn, gpointer user_data) {
+    if (!active_target_list) return;
+
+    // For now, copy selected target only? Or allow multi-selection?
+    // User asked "copy and past of targets". Let's assume single selection first as we used GtkSingleSelection.
+    // If we want multi, we need GtkMultiSelection.
+    // Sticking to single for now based on current code structure, or try to upgrade to multi?
+    // Code uses GtkSingleSelection. Let's stick to single copy.
+
+    GtkWidget *page = gtk_notebook_get_nth_page(target_notebook, gtk_notebook_get_current_page(target_notebook));
+    GtkWidget *scrolled = gtk_widget_get_first_child(page);
+    while (scrolled && !GTK_IS_SCROLLED_WINDOW(scrolled)) scrolled = gtk_widget_get_next_sibling(scrolled);
+
+    GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+    GtkSelectionModel *model = gtk_column_view_get_model(GTK_COLUMN_VIEW(col_view));
+    GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
+    guint pos = gtk_single_selection_get_selected(sel);
+
+    if (pos != GTK_INVALID_LIST_POSITION) {
+        int idx = (int)pos;
+        char *data = target_list_serialize_targets(active_target_list, &idx, 1);
+        if (data) {
+            GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(btn));
+            gdk_clipboard_set_text(clipboard, data);
+            free(data);
+        }
+    }
+}
+
+static void on_paste_received(GObject *source_object, GAsyncResult *res, gpointer user_data) {
+    GdkClipboard *clipboard = GDK_CLIPBOARD(source_object);
+    char *text = gdk_clipboard_read_text_finish(clipboard, res, NULL);
+    if (text) {
+        if (active_target_list) {
+            target_list_deserialize_and_add(active_target_list, text);
+        }
+        g_free(text);
+    }
+}
+
+static void on_paste_targets_clicked(GtkButton *btn, gpointer user_data) {
+    if (!active_target_list) return;
+    GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(btn));
+    gdk_clipboard_read_text_async(clipboard, NULL, on_paste_received, NULL);
+}
+
+
 void on_sky_click(double alt, double az) {
     struct ln_lnlat_posn observer;
     observer.lat = loc.lat;
@@ -140,7 +384,7 @@ void on_sky_click(double alt, double az) {
     struct ln_equ_posn equ;
     ln_get_equ_from_hrz(&hrz, &observer, JD, &equ);
 
-    show_source_selection_dialog(NULL, equ.ra, equ.dec, &loc, &dt);
+    show_source_selection_dialog(NULL, equ.ra, equ.dec, &loc, &dt, get_active_target_list());
 }
 
 static void on_time_selected_from_plot(DateTime new_dt) {
@@ -251,6 +495,9 @@ static void activate(GtkApplication *app, gpointer user_data) {
         return;
     }
 
+    target_list_init();
+    active_target_list = target_list_create("Default");
+
     // Register callback
     target_list_set_change_callback(on_target_list_changed);
 
@@ -269,6 +516,15 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
 
     // Right Panel: Split Vertical (Elevation Top, Bottom Area)
+    // We want the divider to be draggable between Sky View and (Elevation + Controls).
+    // That's what we did with paned.
+    // Now, inside the Right Panel, we have Elevation on top and Controls/Lists on bottom.
+    // The user requested: "Make the delimiter between control panel and target list draggable/movable."
+    // Ah, wait. "Left panel: full night sky view... Right panel: Elevation..."
+    // "Make the delimiter between control panel and target list draggable/movable."
+    // Originally, Elevation was Top Right, and Bottom Right was split horizontally into Controls (Left) and Target List (Right).
+    // If the delimiter between Control Panel and Target List should be draggable, then the Bottom Right container should be a GtkPaned (Horizontal).
+
     GtkWidget *right_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_paned_set_end_child(GTK_PANED(paned), right_box);
     gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
@@ -284,14 +540,19 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(right_box), elev_area);
 
     // Bottom Area: Split Horizontal (Controls Left, Target List Right)
-    GtkWidget *bottom_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    gtk_widget_set_vexpand(bottom_box, TRUE);
-    gtk_box_append(GTK_BOX(right_box), bottom_box);
+    // Using GtkPaned here for draggability.
+    GtkWidget *bottom_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_vexpand(bottom_paned, TRUE);
+    gtk_box_append(GTK_BOX(right_box), bottom_paned);
 
     // Controls Frame (Left Side of Bottom)
     GtkWidget *controls_frame = gtk_frame_new("Controls");
-    gtk_widget_set_hexpand(controls_frame, TRUE);
-    gtk_box_append(GTK_BOX(bottom_box), controls_frame);
+    gtk_widget_set_hexpand(controls_frame, FALSE); // Don't greedily expand, let paned decide
+    gtk_paned_set_start_child(GTK_PANED(bottom_paned), controls_frame);
+    gtk_paned_set_resize_start_child(GTK_PANED(bottom_paned), FALSE); // Controls usually fixed size? Or allow resize. Allow.
+
+    GtkWidget *controls_scroll = gtk_scrolled_window_new();
+    gtk_frame_set_child(GTK_FRAME(controls_frame), controls_scroll);
 
     GtkWidget *controls_grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(controls_grid), 10);
@@ -300,7 +561,7 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_margin_bottom(controls_grid, 10);
     gtk_widget_set_margin_start(controls_grid, 10);
     gtk_widget_set_margin_end(controls_grid, 10);
-    gtk_frame_set_child(GTK_FRAME(controls_frame), controls_grid);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(controls_scroll), controls_grid);
 
     // Site Dropdown
     gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Site:"), 0, 0, 1, 1);
@@ -441,7 +702,8 @@ static void activate(GtkApplication *app, gpointer user_data) {
     // Target List Frame (Right Side of Bottom)
     GtkWidget *targets_frame = gtk_frame_new("Targets");
     gtk_widget_set_hexpand(targets_frame, TRUE);
-    gtk_box_append(GTK_BOX(bottom_box), targets_frame);
+    gtk_paned_set_end_child(GTK_PANED(bottom_paned), targets_frame);
+    gtk_paned_set_resize_end_child(GTK_PANED(bottom_paned), TRUE);
 
     GtkWidget *target_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_widget_set_margin_top(target_box, 5);
@@ -450,26 +712,41 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_margin_end(target_box, 5);
     gtk_frame_set_child(GTK_FRAME(targets_frame), target_box);
 
-    GtkWidget *scrolled_list = gtk_scrolled_window_new();
-    gtk_widget_set_vexpand(scrolled_list, TRUE);
-    gtk_box_append(GTK_BOX(target_box), scrolled_list);
+    // Target List Toolbar
+    GtkWidget *tb_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_append(GTK_BOX(target_box), tb_box);
 
-    target_list_view = GTK_COLUMN_VIEW(gtk_column_view_new(NULL));
-    gtk_widget_set_vexpand(GTK_WIDGET(target_list_view), TRUE);
-    gtk_widget_set_hexpand(GTK_WIDGET(target_list_view), TRUE);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_list), GTK_WIDGET(target_list_view));
+    GtkWidget *btn_new_list = gtk_button_new_with_label("New List");
+    g_signal_connect(btn_new_list, "clicked", G_CALLBACK(on_new_list_clicked), NULL);
+    gtk_box_append(GTK_BOX(tb_box), btn_new_list);
 
-    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
-    g_signal_connect(factory, "setup", G_CALLBACK(target_list_setup_cb), NULL);
-    g_signal_connect(factory, "bind", G_CALLBACK(target_list_bind_cb), NULL);
-    GtkColumnViewColumn *col = gtk_column_view_column_new("Target", factory);
-    gtk_column_view_append_column(target_list_view, col);
+    GtkWidget *btn_save_list = gtk_button_new_with_label("Save");
+    g_signal_connect(btn_save_list, "clicked", G_CALLBACK(on_save_list_clicked), NULL);
+    gtk_box_append(GTK_BOX(tb_box), btn_save_list);
 
-    GtkWidget *btn_del_target = gtk_button_new_with_label("Delete Selected");
+    GtkWidget *btn_load_list = gtk_button_new_with_label("Load");
+    g_signal_connect(btn_load_list, "clicked", G_CALLBACK(on_load_list_clicked), NULL);
+    gtk_box_append(GTK_BOX(tb_box), btn_load_list);
+
+    GtkWidget *btn_copy = gtk_button_new_with_label("Copy");
+    g_signal_connect(btn_copy, "clicked", G_CALLBACK(on_copy_targets_clicked), NULL);
+    gtk_box_append(GTK_BOX(tb_box), btn_copy);
+
+    GtkWidget *btn_paste = gtk_button_new_with_label("Paste");
+    g_signal_connect(btn_paste, "clicked", G_CALLBACK(on_paste_targets_clicked), NULL);
+    gtk_box_append(GTK_BOX(tb_box), btn_paste);
+
+    target_notebook = GTK_NOTEBOOK(gtk_notebook_new());
+    gtk_notebook_set_tab_pos(target_notebook, GTK_POS_TOP);
+    gtk_widget_set_vexpand(GTK_WIDGET(target_notebook), TRUE);
+    g_signal_connect(target_notebook, "switch-page", G_CALLBACK(on_notebook_switch_page), NULL);
+    gtk_box_append(GTK_BOX(target_box), GTK_WIDGET(target_notebook));
+
+    GtkWidget *btn_del_target = gtk_button_new_with_label("Delete Selected Target");
     g_signal_connect(btn_del_target, "clicked", G_CALLBACK(on_delete_target_clicked), NULL);
     gtk_box_append(GTK_BOX(target_box), btn_del_target);
 
-    refresh_target_list_ui();
+    refresh_tabs();
 
     gtk_window_present(GTK_WINDOW(window));
 }
@@ -493,6 +770,7 @@ int main(int argc, char *argv[]) {
     status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
 
+    target_list_cleanup();
     free_catalog();
     return status;
 }
