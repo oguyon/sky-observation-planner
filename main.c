@@ -99,15 +99,15 @@ static void on_target_list_changed() {
         if (tl) {
             // Find the column view
             // Structure: Box -> ScrolledWindow -> ColumnView
-            GtkWidget *scrolled = gtk_widget_get_first_child(page);
-            while (scrolled && !GTK_IS_SCROLLED_WINDOW(scrolled)) {
-                 scrolled = gtk_widget_get_next_sibling(scrolled);
+            GtkWidget *sc = gtk_widget_get_first_child(page);
+            while (sc && !GTK_IS_SCROLLED_WINDOW(sc)) {
+                 sc = gtk_widget_get_next_sibling(sc);
             }
-            if (!scrolled) continue;
+            if (!sc) continue;
 
             // GTK4 structure is ScrolledWindow -> Viewport -> ColumnView usually, or direct child?
             // gtk_scrolled_window_get_child() returns the child.
-            GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+            GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(sc));
 
             if (GTK_IS_COLUMN_VIEW(col_view)) {
                 // Rebuild model
@@ -208,42 +208,58 @@ static void on_notebook_switch_page(GtkNotebook *notebook, GtkWidget *page, guin
     active_target_list = tl;
 }
 
-// Dialog for New List
-static void on_new_list_response(GtkDialog *dialog, int response_id, gpointer user_data) {
-    if (response_id == GTK_RESPONSE_OK) {
-        GtkEntry *entry = GTK_ENTRY(user_data);
-        const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
-        if (text && strlen(text) > 0) {
-            target_list_create(text);
-            refresh_tabs();
-            // Switch to new tab
-            int count = target_list_get_list_count();
-            gtk_notebook_set_current_page(target_notebook, count-1);
-        }
+static void on_new_list_create_clicked(GtkButton *btn, gpointer user_data) {
+    GtkWidget *entry = GTK_WIDGET(user_data);
+    const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+    if (text && strlen(text) > 0) {
+        target_list_create(text);
+        refresh_tabs();
+        // Switch to new tab
+        int count = target_list_get_list_count();
+        gtk_notebook_set_current_page(target_notebook, count-1);
     }
-    gtk_window_destroy(GTK_WINDOW(dialog));
+    GtkWidget *window = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(btn)));
+    gtk_window_destroy(GTK_WINDOW(window));
+}
+
+static void on_new_list_cancel_clicked(GtkButton *btn, gpointer user_data) {
+    GtkWidget *window = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(btn)));
+    gtk_window_destroy(GTK_WINDOW(window));
 }
 
 static void on_new_list_clicked(GtkButton *btn, gpointer user_data) {
-    GtkWidget *dialog = gtk_dialog_new_with_buttons("New Target List", GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))),
-                                                    GTK_DIALOG_MODAL,
-                                                    "Cancel", GTK_RESPONSE_CANCEL,
-                                                    "Create", GTK_RESPONSE_OK,
-                                                    NULL);
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_widget_set_margin_top(box, 10);
-    gtk_widget_set_margin_bottom(box, 10);
-    gtk_widget_set_margin_start(box, 10);
-    gtk_widget_set_margin_end(box, 10);
-    gtk_box_append(GTK_BOX(content), box);
+    GtkWidget *window = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(window), "New Target List");
+    gtk_window_set_transient_for(GTK_WINDOW(window), GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))));
+    gtk_window_set_modal(GTK_WINDOW(window), TRUE);
 
-    gtk_box_append(GTK_BOX(box), gtk_label_new("Name:"));
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_top(vbox, 10);
+    gtk_widget_set_margin_bottom(vbox, 10);
+    gtk_widget_set_margin_start(vbox, 10);
+    gtk_widget_set_margin_end(vbox, 10);
+    gtk_window_set_child(GTK_WINDOW(window), vbox);
+
+    GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_append(GTK_BOX(vbox), hbox);
+
+    gtk_box_append(GTK_BOX(hbox), gtk_label_new("Name:"));
     GtkWidget *entry = gtk_entry_new();
-    gtk_box_append(GTK_BOX(box), entry);
+    gtk_box_append(GTK_BOX(hbox), entry);
 
-    g_signal_connect(dialog, "response", G_CALLBACK(on_new_list_response), entry);
-    gtk_widget_show(dialog);
+    GtkWidget *bbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_widget_set_halign(bbox, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(vbox), bbox);
+
+    GtkWidget *btn_cancel = gtk_button_new_with_label("Cancel");
+    g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_new_list_cancel_clicked), NULL);
+    gtk_box_append(GTK_BOX(bbox), btn_cancel);
+
+    GtkWidget *btn_create = gtk_button_new_with_label("Create");
+    g_signal_connect(btn_create, "clicked", G_CALLBACK(on_new_list_create_clicked), entry);
+    gtk_box_append(GTK_BOX(bbox), btn_create);
+
+    gtk_window_present(GTK_WINDOW(window));
 }
 
 // Delete Selected Target
@@ -266,36 +282,37 @@ static void on_delete_target_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 // Save/Load
-static void on_save_list_response(GtkDialog *dialog, int response, gpointer user_data) {
-    if (response == GTK_RESPONSE_ACCEPT) {
-        GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
-        GFile *file = gtk_file_chooser_get_file(chooser);
+static void on_save_finish(GObject *source_object, GAsyncResult *res, gpointer user_data) {
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source_object);
+    GError *error = NULL;
+    GFile *file = gtk_file_dialog_save_finish(dialog, res, &error);
+
+    if (file) {
         char *filename = g_file_get_path(file);
         if (active_target_list && filename) {
             target_list_save(active_target_list, filename);
         }
         g_free(filename);
         g_object_unref(file);
+    } else {
+        if (error) g_error_free(error);
     }
-    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_object_unref(dialog);
 }
 
 static void on_save_list_clicked(GtkButton *btn, gpointer user_data) {
     if (!active_target_list) return;
-    GtkWidget *dialog = gtk_file_chooser_dialog_new("Save Target List",
-                                      GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))),
-                                      GTK_FILE_CHOOSER_ACTION_SAVE,
-                                      "_Cancel", GTK_RESPONSE_CANCEL,
-                                      "_Save", GTK_RESPONSE_ACCEPT,
-                                      NULL);
-    g_signal_connect(dialog, "response", G_CALLBACK(on_save_list_response), NULL);
-    gtk_widget_show(dialog);
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Save Target List");
+    gtk_file_dialog_save(dialog, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))), NULL, on_save_finish, NULL);
 }
 
-static void on_load_list_response(GtkDialog *dialog, int response, gpointer user_data) {
-    if (response == GTK_RESPONSE_ACCEPT) {
-        GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
-        GFile *file = gtk_file_chooser_get_file(chooser);
+static void on_load_finish(GObject *source_object, GAsyncResult *res, gpointer user_data) {
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source_object);
+    GError *error = NULL;
+    GFile *file = gtk_file_dialog_open_finish(dialog, res, &error);
+
+    if (file) {
         char *filename = g_file_get_path(file);
         if (filename) {
             TargetList *tl = target_list_load(filename);
@@ -308,19 +325,16 @@ static void on_load_list_response(GtkDialog *dialog, int response, gpointer user
         }
         g_free(filename);
         g_object_unref(file);
+    } else {
+        if (error) g_error_free(error);
     }
-    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_object_unref(dialog);
 }
 
 static void on_load_list_clicked(GtkButton *btn, gpointer user_data) {
-    GtkWidget *dialog = gtk_file_chooser_dialog_new("Load Target List",
-                                      GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))),
-                                      GTK_FILE_CHOOSER_ACTION_OPEN,
-                                      "_Cancel", GTK_RESPONSE_CANCEL,
-                                      "_Open", GTK_RESPONSE_ACCEPT,
-                                      NULL);
-    g_signal_connect(dialog, "response", G_CALLBACK(on_load_list_response), NULL);
-    gtk_widget_show(dialog);
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Load Target List");
+    gtk_file_dialog_open(dialog, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn))), NULL, on_load_finish, NULL);
 }
 
 // Copy/Paste
