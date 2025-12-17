@@ -308,31 +308,35 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     // Draw Stars
     cairo_set_source_rgb(cr, 1, 1, 1);
-    if (!stars) return;
-    for (int i = 0; i < num_stars; i++) {
-        // Magnitude limit for performance and visibility
-        double limit = 6.0 + 2.0 * log10(view_zoom);
-        if (stars[i].mag > limit) continue;
+    int stars_drawn_count = 0;
+    if (stars) {
+        for (int i = 0; i < num_stars; i++) {
+            if (stars[i].mag > current_options->star_mag_limit) continue;
 
-        double alt, az;
-        get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
-        double u, v;
-        if (project(alt, az + 180.0, &u, &v)) {
-            double tx, ty;
-            transform_point(u, v, &tx, &ty);
+            double alt, az;
+            get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
+            double u, v;
+            if (project(alt, az + 180.0, &u, &v)) {
+                double tx, ty;
+                transform_point(u, v, &tx, &ty);
 
-            // New formula for star size
-            double base_size = 3.0 - stars[i].mag * 0.15;
-            if (base_size < 0.2) base_size = 0.2;
+                double size = (current_options->star_size_m0 - stars[i].mag) * current_options->star_size_ma;
+                if (size < 1.0) size = 1.0;
 
-            // Scale with zoom
-            double size = base_size * pow(view_zoom, 0.5);
-
-            cairo_new_path(cr);
-            cairo_arc(cr, cx + tx * radius, cy + ty * radius, size, 0, 2 * M_PI);
-            cairo_fill(cr);
+                cairo_new_path(cr);
+                cairo_arc(cr, cx + tx * radius, cy + ty * radius, size, 0, 2 * M_PI);
+                cairo_fill(cr);
+                stars_drawn_count++;
+            }
         }
     }
+
+    // Draw star count
+    char count_buf[32];
+    snprintf(count_buf, 32, "Stars: %d", stars_drawn_count);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_move_to(cr, 10, height - 10);
+    cairo_show_text(cr, count_buf);
 
     // Draw Planets
     if (current_options->show_planets) {

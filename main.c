@@ -37,7 +37,10 @@ SkyViewOptions sky_options = {
     .show_ra_dec_grid = FALSE,
     .show_planets = FALSE,
     .show_moon_circles = FALSE,
-    .show_ecliptic = FALSE
+    .show_ecliptic = FALSE,
+    .star_mag_limit = 6.0,
+    .star_size_m0 = 8.0,
+    .star_size_ma = 1.0
 };
 
 // UI Widgets for Target List
@@ -198,6 +201,21 @@ static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
     }
 }
 
+static void on_mag_limit_changed(GtkRange *range, gpointer user_data) {
+    sky_options.star_mag_limit = gtk_range_get_value(range);
+    sky_view_redraw();
+}
+
+static void on_m0_changed(GtkRange *range, gpointer user_data) {
+    sky_options.star_size_m0 = gtk_range_get_value(range);
+    sky_view_redraw();
+}
+
+static void on_ma_changed(GtkRange *range, gpointer user_data) {
+    sky_options.star_size_ma = gtk_range_get_value(range);
+    sky_view_redraw();
+}
+
 static void activate(GtkApplication *app, gpointer user_data) {
     if (load_catalog() != 0) {
         fprintf(stderr, "Failed to load catalog.\n");
@@ -327,8 +345,36 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(btn_reset, "clicked", G_CALLBACK(sky_view_reset_view), NULL);
     gtk_box_append(GTK_BOX(toggle_box), btn_reset);
 
+    // Star Settings
+    GtkWidget *star_expander = gtk_expander_new("Star Settings");
+    gtk_grid_attach(GTK_GRID(controls_grid), star_expander, 0, 3, 2, 1);
+
+    GtkWidget *star_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_expander_set_child(GTK_EXPANDER(star_expander), star_box);
+
+    // Mag Limit
+    gtk_box_append(GTK_BOX(star_box), gtk_label_new("Mag Limit:"));
+    GtkWidget *scale_limit = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 15.0, 0.1);
+    gtk_range_set_value(GTK_RANGE(scale_limit), sky_options.star_mag_limit);
+    g_signal_connect(scale_limit, "value-changed", G_CALLBACK(on_mag_limit_changed), NULL);
+    gtk_box_append(GTK_BOX(star_box), scale_limit);
+
+    // M0
+    gtk_box_append(GTK_BOX(star_box), gtk_label_new("Spot Size M0:"));
+    GtkWidget *scale_m0 = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 20.0, 0.1);
+    gtk_range_set_value(GTK_RANGE(scale_m0), sky_options.star_size_m0);
+    g_signal_connect(scale_m0, "value-changed", G_CALLBACK(on_m0_changed), NULL);
+    gtk_box_append(GTK_BOX(star_box), scale_m0);
+
+    // MA
+    gtk_box_append(GTK_BOX(star_box), gtk_label_new("Spot Size MA:"));
+    GtkWidget *scale_ma = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.1, 5.0, 0.1);
+    gtk_range_set_value(GTK_RANGE(scale_ma), sky_options.star_size_ma);
+    g_signal_connect(scale_ma, "value-changed", G_CALLBACK(on_ma_changed), NULL);
+    gtk_box_append(GTK_BOX(star_box), scale_ma);
+
     // Status Label
-    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 3, 2, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 4, 2, 1);
 
     // Target List Frame (Right Side of Bottom)
     GtkWidget *targets_frame = gtk_frame_new("Targets");
