@@ -112,8 +112,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     if (current_options->auto_star_settings) {
         effective_limit = 8.0 + view_zoom;
-        effective_m0 = 7.0 + 0.5 * view_zoom;
-        effective_ma = 0.4 + 0.1 * view_zoom;
+        effective_m0 = 6.0 + 0.3 * (view_zoom - 1.0);
+        effective_ma = 0.4 + 0.05 * (view_zoom - 1.0);
     }
 
     cairo_set_source_rgb(cr, 0, 0, 0);
@@ -294,9 +294,12 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                     b = 1.0 + (b - 1.0) * sat;
 
                     // Clamp
-                    if (r < 0) r = 0; if (r > 1) r = 1;
-                    if (g < 0) g = 0; if (g > 1) g = 1;
-                    if (b < 0) b = 0; if (b > 1) b = 1;
+                    if (r < 0) r = 0;
+                    if (r > 1) r = 1;
+                    if (g < 0) g = 0;
+                    if (g > 1) g = 1;
+                    if (b < 0) b = 0;
+                    if (b > 1) b = 1;
 
                     cairo_set_source_rgba(cr, r * brightness, g * brightness, b * brightness, 1.0);
                 } else {
@@ -407,7 +410,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     // Info Boxes
     {
         double lst = get_lst(*current_dt, *current_loc);
-        while (lst < 0.0) lst += 24.0; while (lst > 24.0) lst -= 24.0;
+        while (lst < 0.0) lst += 24.0;
+        while (lst > 24.0) lst -= 24.0;
         double jd_ut = get_julian_day(*current_dt); struct ln_date ut_date; ln_get_date(jd_ut, &ut_date);
         cairo_set_source_rgba(cr, 0, 0, 0, 0.5); cairo_rectangle(cr, 10, 10, 120, 55); cairo_fill(cr);
         cairo_set_source_rgb(cr, 1, 1, 1);
