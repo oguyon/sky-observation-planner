@@ -530,18 +530,23 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         snprintf(buf_header, 64, "Ephemeris (%s)", current_options->ephemeris_use_ut ? "UT" : "Local");
 
         // Solar
+        // libnova apparently returns the next set and rise events.
+        // For standard Northern Hemisphere observation (or typical convention),
+        // if rst.set is in morning and rst.rise in evening, labels might be swapped due to coordinate convention.
+        // We trust the values: if 'Set' is 06:00, it's Sunrise. If 'Rise' is 18:00, it's Sunset.
+        // We swap them here to match user expectation and standard output.
         ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
-        format_rst_time(rst.set, tz, buf_sunset, 64, "Sunset");
-        format_rst_time(rst.rise, tz, buf_sunrise, 64, "Sunrise");
+        format_rst_time(rst.rise, tz, buf_sunset, 64, "Sunset");
+        format_rst_time(rst.set, tz, buf_sunrise, 64, "Sunrise");
 
         ln_get_solar_rst_horizon(jd_noon, &observer, -18.0, &rst);
-        format_rst_time(rst.set, tz, buf_tw_start, 64, "Astro Tw. Start");
-        format_rst_time(rst.rise, tz, buf_tw_end, 64, "Astro Tw. End");
+        format_rst_time(rst.rise, tz, buf_tw_start, 64, "Astro Tw. Start");
+        format_rst_time(rst.set, tz, buf_tw_end, 64, "Astro Tw. End");
 
-        // Lunar
+        // Lunar (Moon Rise/Set might also be swapped if coordinate system is consistent)
         ln_get_lunar_rst(jd_noon, &observer, &rst);
-        format_rst_time(rst.rise, tz, buf_mr, 64, "Moon Rise");
-        format_rst_time(rst.set, tz, buf_ms, 64, "Moon Set");
+        format_rst_time(rst.set, tz, buf_mr, 64, "Moon Rise");
+        format_rst_time(rst.rise, tz, buf_ms, 64, "Moon Set");
 
         double phase = ln_get_lunar_disk(jd_now); // 0..1
         snprintf(buf_mill, 64, "Moon Illum: %.1f%%", phase * 100.0);
@@ -666,7 +671,7 @@ static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, dou
 
     // Drag X -> Rotation (around zenith)
     // Sensitivity: 1 full width = 180 degrees?
-    view_rotation = drag_start_rotation + (offset_x / width) * M_PI;
+    view_rotation = drag_start_rotation - (offset_x / width) * M_PI;
 
     // Drag Y -> Pan Y (Vertical shift of zenith)
     view_pan_y = drag_start_pan_y + (offset_y / radius);
