@@ -15,20 +15,21 @@ typedef struct {
     const char *name;
     double lat;
     double lon;
+    double elevation; // meters
     double timezone_offset;
 } Site;
 
 Site sites[] = {
-    {"Maunakea Observatories", 19.8207, -155.4681, -10.0},
-    {"La Palma (Roque de los Muchachos)", 28.7636, -17.8947, 0.0},
-    {"Paranal Observatory", -24.6275, -70.4044, -4.0},
-    {"Las Campanas Observatory", -29.0146, -70.6926, -4.0},
-    {"New York City", 40.7128, -74.0060, -5.0},
-    {NULL, 0, 0, 0}
+    {"Maunakea Observatories", 19.8207, -155.4681, 4205.0, -10.0},
+    {"La Palma (Roque de los Muchachos)", 28.7636, -17.8947, 2396.0, 0.0},
+    {"Paranal Observatory", -24.6275, -70.4044, 2635.0, -4.0},
+    {"Las Campanas Observatory", -29.0146, -70.6926, 2380.0, -4.0},
+    {"New York City", 40.7128, -74.0060, 10.0, -5.0},
+    {NULL, 0, 0, 0, 0}
 };
 
 // Global State
-Location loc = {19.8207, -155.4681};
+Location loc = {19.8207, -155.4681, 4205.0};
 DateTime dt;
 
 SkyViewOptions sky_options = {
@@ -54,6 +55,7 @@ static GtkNotebook *target_notebook = NULL;
 static TargetList *active_target_list = NULL;
 
 // UI Widgets for Star Settings (needed for auto update?)
+static GtkLabel *lbl_site_info = NULL;
 static GtkRange *range_mag = NULL;
 static GtkRange *range_m0 = NULL;
 static GtkRange *range_ma = NULL;
@@ -468,7 +470,15 @@ static void on_site_changed(GObject *object, GParamSpec *pspec, gpointer user_da
     if (selected != GTK_INVALID_LIST_POSITION && sites[selected].name) {
         loc.lat = sites[selected].lat;
         loc.lon = sites[selected].lon;
+        loc.elevation = sites[selected].elevation;
         dt.timezone_offset = sites[selected].timezone_offset;
+
+        if (lbl_site_info) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "Lat: %.4f  Lon: %.4f  Elev: %.0fm", loc.lat, loc.lon, loc.elevation);
+            gtk_label_set_text(lbl_site_info, buf);
+        }
+
         update_all_views();
     }
 }
@@ -615,8 +625,16 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(dropdown_site, "notify::selected", G_CALLBACK(on_site_changed), NULL);
     gtk_grid_attach(GTK_GRID(controls_grid), dropdown_site, 1, 0, 1, 1);
 
+    // Site Info Label
+    char site_info_buf[128];
+    snprintf(site_info_buf, sizeof(site_info_buf), "Lat: %.4f  Lon: %.4f  Elev: %.0fm", loc.lat, loc.lon, loc.elevation);
+    lbl_site_info = GTK_LABEL(gtk_label_new(site_info_buf));
+    gtk_widget_set_halign(GTK_WIDGET(lbl_site_info), GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(controls_grid), GTK_WIDGET(lbl_site_info), 0, 1, 2, 1);
+
+
     // Date Control
-    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Date:"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Date:"), 0, 2, 1, 1);
     GtkWidget *date_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     char date_buf[32];
     sprintf(date_buf, "%04d-%02d-%02d", dt.year, dt.month, dt.day);
@@ -631,11 +649,11 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), lbl_date_value);
     gtk_popover_set_child(GTK_POPOVER(popover), calendar);
     gtk_menu_button_set_popover(GTK_MENU_BUTTON(cal_button), popover);
-    gtk_grid_attach(GTK_GRID(controls_grid), date_box, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), date_box, 1, 2, 1, 1);
 
     // Toggles
     GtkWidget *toggle_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_grid_attach(GTK_GRID(controls_grid), toggle_box, 0, 2, 2, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), toggle_box, 0, 3, 2, 1);
 
     GtkWidget *cb_lines = gtk_check_button_new_with_label("Constellation Lines");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_lines), sky_options.show_constellation_lines);
@@ -683,7 +701,7 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     // Star Settings
     GtkWidget *star_expander = gtk_expander_new("Star Settings");
-    gtk_grid_attach(GTK_GRID(controls_grid), star_expander, 0, 3, 2, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), star_expander, 0, 4, 2, 1);
 
     GtkWidget *star_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_expander_set_child(GTK_EXPANDER(star_expander), star_box);
@@ -746,16 +764,16 @@ static void activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *btn_font_plus = gtk_button_new_with_label("+");
     g_signal_connect(btn_font_plus, "clicked", G_CALLBACK(on_font_plus_clicked), NULL);
     gtk_box_append(GTK_BOX(font_box), btn_font_plus);
-    gtk_grid_attach(GTK_GRID(controls_grid), font_box, 0, 4, 2, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), font_box, 0, 5, 2, 1);
 
     // Ephemeris UT Toggle
     GtkWidget *cb_ut = gtk_check_button_new_with_label("Ephemeris in UT");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ut), sky_options.ephemeris_use_ut);
     g_signal_connect(cb_ut, "toggled", G_CALLBACK(on_ephemeris_ut_toggled), NULL);
-    gtk_grid_attach(GTK_GRID(controls_grid), cb_ut, 0, 5, 2, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), cb_ut, 0, 6, 2, 1);
 
     // Status Label
-    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 6, 2, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 7, 2, 1);
 
     // Target List Frame (Right Side of Bottom)
     GtkWidget *targets_frame = gtk_frame_new("Targets");

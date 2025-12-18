@@ -6,6 +6,7 @@
 typedef struct {
     double lat;
     double lon;
+    double elevation; // Elevation in meters
 } Location;
 
 typedef struct {

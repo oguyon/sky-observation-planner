@@ -499,12 +499,18 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         double jd_ut = get_julian_day(*current_dt); struct ln_date ut_date; ln_get_date(jd_ut, &ut_date);
 
         char buf_loc[64], buf_ut[64], buf_lst[64];
+        char buf_lat[64], buf_lon[64], buf_elev[64];
+
         snprintf(buf_loc, 64, "Local: %02d:%02d", current_dt->hour, current_dt->minute);
         snprintf(buf_ut, 64, "UT: %02d:%02d", ut_date.hours, ut_date.minutes);
         snprintf(buf_lst, 64, "LST: %02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
 
-        const char *lines[] = {buf_loc, buf_ut, buf_lst};
-        draw_styled_text_box(cr, 10, 10, lines, 3, 0);
+        snprintf(buf_lat, 64, "Lat: %.4f", current_loc->lat);
+        snprintf(buf_lon, 64, "Lon: %.4f", current_loc->lon);
+        snprintf(buf_elev, 64, "Elev: %.0fm", current_loc->elevation);
+
+        const char *lines[] = {buf_loc, buf_ut, buf_lst, buf_lat, buf_lon, buf_elev};
+        draw_styled_text_box(cr, 10, 10, lines, 6, 0);
     }
 
     // Ephemeris Box
@@ -536,8 +542,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         // We trust the values: if 'Set' is 06:00, it's Sunrise. If 'Rise' is 18:00, it's Sunset.
         // We swap them here to match user expectation and standard output.
         ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
-        format_rst_time(rst.rise, tz, buf_sunset, 64, "Sunset");
-        format_rst_time(rst.set, tz, buf_sunrise, 64, "Sunrise");
+        format_rst_time(rst.set, tz, buf_sunset, 64, "Sunset");
+        format_rst_time(rst.rise, tz, buf_sunrise, 64, "Sunrise");
 
         ln_get_solar_rst_horizon(jd_noon, &observer, -18.0, &rst);
         format_rst_time(rst.rise, tz, buf_tw_start, 64, "Astro Tw. Start");
@@ -554,9 +560,9 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         const char *lines[] = {buf_header, buf_sunset, buf_tw_start, buf_tw_end, buf_sunrise, buf_mr, buf_ms, buf_mill};
 
         // Draw below Time box. Estimate Time box height.
-        // Base size 12 * scale * 1.2 * 3 lines + 10 padding ~ 55 * scale.
+        // Base size 12 * scale * 1.2 * 6 lines + 10 padding ~ 90 * scale.
         double scale = (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
-        double y_offset = 10 + (12.0 * scale * 1.2 * 3 + 10) + 10;
+        double y_offset = 10 + (12.0 * scale * 1.2 * 6 + 10) + 10;
 
         draw_styled_text_box(cr, 10, y_offset, lines, 8, 0);
     }
@@ -657,10 +663,14 @@ static void on_scroll(GtkEventControllerScroll *controller, double dx, double dy
 
 static double drag_start_pan_y = 0;
 static double drag_start_rotation = 0;
+static double drag_start_x = 0;
+static double drag_start_y = 0;
 
 static void on_drag_begin(GtkGestureDrag *gesture, double start_x, double start_y, gpointer user_data) {
     drag_start_pan_y = view_pan_y;
     drag_start_rotation = view_rotation;
+    drag_start_x = start_x;
+    drag_start_y = start_y;
 }
 
 static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, double offset_y, gpointer user_data) {
@@ -668,19 +678,43 @@ static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, dou
     int width = gtk_widget_get_width(widget);
     int height = gtk_widget_get_height(widget);
     double radius = (width < height ? width : height) / 2.0 - 10;
+    double cx = width / 2.0;
+    double cy = height / 2.0;
 
-    // Drag X -> Rotation (around zenith)
-    // Sensitivity: 1 full width = 180 degrees?
-    view_rotation = drag_start_rotation - (offset_x / width) * M_PI;
-
-    // Drag Y -> Pan Y (Vertical shift of zenith)
+    // --- Pan Y (Vertical shift of zenith) ---
+    // Moves the projection vertically on screen. 1:1 with mouse movement.
+    // view_pan_y is in normalized units relative to radius.
+    // offset_y is in pixels.
+    // delta_pan_y * radius = offset_y.
     view_pan_y = drag_start_pan_y + (offset_y / radius);
 
     // Constraint: Zenith not below center (pan_y <= 0)
     if (view_pan_y > 0) view_pan_y = 0;
 
-    // Constraint: Pan X is always 0
+    // Constraint: Pan X is always 0 (Zenith stays on vertical centerline)
     view_pan_x = 0;
+
+
+    // --- Drag X -> Rotation (Azimuth) ---
+    // User request: Point under cursor should stay fixed (tangentially).
+    // This implies angular change d_theta = dx / r_screen.
+    // User request: "North of zenith (Top): Correct direction. South: Invert."
+
+    // Calculate start position relative to center
+    double rel_x = drag_start_x - cx;
+    double rel_y = drag_start_y - cy;
+    double dist = sqrt(rel_x*rel_x + rel_y*rel_y);
+
+    // Clamp distance to avoid infinite speed near center
+    double effective_dist = dist;
+    if (effective_dist < 20.0) effective_dist = 20.0;
+
+    // Calculate rotation delta (radians)
+    // offset_x is pixels.
+    // delta_theta = (offset_x / dist)
+    double delta_rot = (offset_x / effective_dist);
+
+    view_rotation = drag_start_rotation + delta_rot;
 
     sky_view_redraw();
 }
