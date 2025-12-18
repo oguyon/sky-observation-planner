@@ -520,11 +520,14 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         struct ln_lnlat_posn observer = {current_loc->lat, current_loc->lon};
         struct ln_rst_time rst;
 
+        char buf_header[64];
         char buf_sunset[64], buf_tw_start[64], buf_tw_end[64], buf_sunrise[64];
         char buf_mr[64], buf_ms[64], buf_mill[64];
 
         // Timezone: 0 for UT, current_dt->timezone_offset for Local
         double tz = current_options->ephemeris_use_ut ? 0.0 : current_dt->timezone_offset;
+
+        snprintf(buf_header, 64, "Ephemeris (%s)", current_options->ephemeris_use_ut ? "UT" : "Local");
 
         // Solar
         ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
@@ -543,14 +546,14 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         double phase = ln_get_lunar_disk(jd_now); // 0..1
         snprintf(buf_mill, 64, "Moon Illum: %.1f%%", phase * 100.0);
 
-        const char *lines[] = {buf_sunset, buf_tw_start, buf_tw_end, buf_sunrise, buf_mr, buf_ms, buf_mill};
+        const char *lines[] = {buf_header, buf_sunset, buf_tw_start, buf_tw_end, buf_sunrise, buf_mr, buf_ms, buf_mill};
 
         // Draw below Time box. Estimate Time box height.
         // Base size 12 * scale * 1.2 * 3 lines + 10 padding ~ 55 * scale.
         double scale = (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
         double y_offset = 10 + (12.0 * scale * 1.2 * 3 + 10) + 10;
 
-        draw_styled_text_box(cr, 10, y_offset, lines, 7, 0);
+        draw_styled_text_box(cr, 10, y_offset, lines, 8, 0);
     }
 
     if (cursor_alt >= 0) {
