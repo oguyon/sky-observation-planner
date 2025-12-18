@@ -20,6 +20,7 @@ typedef struct {
     double star_saturation;
     gboolean auto_star_settings;
     double font_scale;
+    gboolean ephemeris_use_ut;
 } SkyViewOptions;
 
 GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double alt, double az));

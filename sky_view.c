@@ -23,6 +23,7 @@ static double cursor_az = -1;
 static double view_zoom = 1.0;
 static double view_pan_x = 0.0; // Normalized units
 static double view_pan_y = 0.0; // Normalized units
+static double view_rotation = 0.0; // Radians
 static Target *highlighted_target = NULL;
 
 void sky_view_set_highlighted_target(Target *target) {
@@ -34,6 +35,7 @@ void sky_view_reset_view() {
     view_zoom = 1.0;
     view_pan_x = 0.0;
     view_pan_y = 0.0;
+    view_rotation = 0.0;
     sky_view_redraw();
 }
 
@@ -52,10 +54,13 @@ static int project(double alt, double az, double *x, double *y) {
     return 1;
 }
 
-// Apply View Transformation (Pan -> Scale)
+// Apply View Transformation (Rotate -> Scale -> Pan)
 static void transform_point(double u, double v, double *tx, double *ty) {
-    double s_u = u * view_zoom;
-    double s_v = v * view_zoom;
+    double u_rot = u * cos(view_rotation) - v * sin(view_rotation);
+    double v_rot = u * sin(view_rotation) + v * cos(view_rotation);
+
+    double s_u = u_rot * view_zoom;
+    double s_v = v_rot * view_zoom;
     *tx = s_u + view_pan_x;
     *ty = s_v + view_pan_y;
 }
@@ -63,8 +68,11 @@ static void transform_point(double u, double v, double *tx, double *ty) {
 static void untransform_point(double tx, double ty, double *u, double *v) {
     double s_u = tx - view_pan_x;
     double s_v = ty - view_pan_y;
-    *u = s_u / view_zoom;
-    *v = s_v / view_zoom;
+    double u_rot = s_u / view_zoom;
+    double v_rot = s_v / view_zoom;
+
+    *u = u_rot * cos(-view_rotation) - v_rot * sin(-view_rotation);
+    *v = u_rot * sin(-view_rotation) + v_rot * cos(-view_rotation);
 }
 
 static void unproject(double x, double y, double *alt, double *az) {
@@ -508,19 +516,22 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         char buf_sunset[64], buf_tw_start[64], buf_tw_end[64], buf_sunrise[64];
         char buf_mr[64], buf_ms[64], buf_mill[64];
 
+        // Timezone: 0 for UT, current_dt->timezone_offset for Local
+        double tz = current_options->ephemeris_use_ut ? 0.0 : current_dt->timezone_offset;
+
         // Solar
         ln_get_solar_rst_horizon(jd, &observer, -0.833, &rst);
-        format_rst_time(rst.set, current_dt->timezone_offset, buf_sunset, 64, "Sunset");
-        format_rst_time(rst.rise, current_dt->timezone_offset, buf_sunrise, 64, "Sunrise");
+        format_rst_time(rst.set, tz, buf_sunset, 64, "Sunset");
+        format_rst_time(rst.rise, tz, buf_sunrise, 64, "Sunrise");
 
         ln_get_solar_rst_horizon(jd, &observer, -18.0, &rst);
-        format_rst_time(rst.set, current_dt->timezone_offset, buf_tw_start, 64, "Astro Tw. Start");
-        format_rst_time(rst.rise, current_dt->timezone_offset, buf_tw_end, 64, "Astro Tw. End");
+        format_rst_time(rst.set, tz, buf_tw_start, 64, "Astro Tw. Start");
+        format_rst_time(rst.rise, tz, buf_tw_end, 64, "Astro Tw. End");
 
         // Lunar
         ln_get_lunar_rst(jd, &observer, &rst);
-        format_rst_time(rst.rise, current_dt->timezone_offset, buf_mr, 64, "Moon Rise");
-        format_rst_time(rst.set, current_dt->timezone_offset, buf_ms, 64, "Moon Set");
+        format_rst_time(rst.rise, tz, buf_mr, 64, "Moon Rise");
+        format_rst_time(rst.set, tz, buf_ms, 64, "Moon Set");
 
         double phase = ln_get_lunar_disk(jd); // 0..1
         snprintf(buf_mill, 64, "Moon Illum: %.1f%%", phase * 100.0);
@@ -619,20 +630,22 @@ static void on_motion(GtkEventControllerMotion *controller, double x, double y, 
 }
 
 static void on_scroll(GtkEventControllerScroll *controller, double dx, double dy, gpointer user_data) {
-    if (dy < 0) {
-        view_zoom *= 1.1;
-    } else {
-        view_zoom /= 1.1;
-    }
+    double factor = 1.1;
+    if (dy > 0) factor = 1.0 / 1.1;
+
+    view_zoom *= factor;
+    // Scale pan_y to keep center fixed relative to sky (since pan_x=0)
+    view_pan_y *= factor;
+
     sky_view_redraw();
 }
 
-static double drag_start_pan_x = 0;
 static double drag_start_pan_y = 0;
+static double drag_start_rotation = 0;
 
 static void on_drag_begin(GtkGestureDrag *gesture, double start_x, double start_y, gpointer user_data) {
-    drag_start_pan_x = view_pan_x;
     drag_start_pan_y = view_pan_y;
+    drag_start_rotation = view_rotation;
 }
 
 static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, double offset_y, gpointer user_data) {
@@ -641,9 +654,18 @@ static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, dou
     int height = gtk_widget_get_height(widget);
     double radius = (width < height ? width : height) / 2.0 - 10;
 
-    // Pan (Translation) logic
-    view_pan_x = drag_start_pan_x + (offset_x / radius);
+    // Drag X -> Rotation (around zenith)
+    // Sensitivity: 1 full width = 180 degrees?
+    view_rotation = drag_start_rotation + (offset_x / width) * M_PI;
+
+    // Drag Y -> Pan Y (Vertical shift of zenith)
     view_pan_y = drag_start_pan_y + (offset_y / radius);
+
+    // Constraint: Zenith not below center (pan_y <= 0)
+    if (view_pan_y > 0) view_pan_y = 0;
+
+    // Constraint: Pan X is always 0
+    view_pan_x = 0;
 
     sky_view_redraw();
 }

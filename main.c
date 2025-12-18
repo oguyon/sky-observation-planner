@@ -45,7 +45,8 @@ SkyViewOptions sky_options = {
     .show_star_colors = FALSE,
     .star_saturation = 1.0,
     .auto_star_settings = TRUE, // Default requested
-    .font_scale = 1.0
+    .font_scale = 1.0,
+    .ephemeris_use_ut = FALSE
 };
 
 // UI Widgets for Target List
@@ -108,17 +109,17 @@ static void on_target_list_changed() {
             // Structure: Box -> CheckButton -> ScrolledWindow -> ColumnView
             // We iterate children to find ScrolledWindow
             GtkWidget *child = gtk_widget_get_first_child(page);
-            GtkWidget *scrolled = NULL;
+            GtkWidget *sc = NULL;
             while (child) {
                  if (GTK_IS_SCROLLED_WINDOW(child)) {
-                     scrolled = child;
+                     sc = child;
                      break;
                  }
                  child = gtk_widget_get_next_sibling(child);
             }
-            if (!scrolled) continue;
+            if (!sc) continue;
 
-            GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+            GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(sc));
 
             if (GTK_IS_COLUMN_VIEW(col_view)) {
                 // Rebuild model
@@ -534,6 +535,11 @@ static void on_font_minus_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_list_visibility_toggled(GtkCheckButton *btn, gpointer user_data);
 
+static void on_ephemeris_ut_toggled(GtkCheckButton *btn, gpointer user_data) {
+    sky_options.ephemeris_use_ut = gtk_check_button_get_active(btn);
+    sky_view_redraw();
+}
+
 static void activate(GtkApplication *app, gpointer user_data) {
     if (load_catalog() != 0) {
         fprintf(stderr, "Failed to load catalog.\n");
@@ -752,8 +758,14 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(font_box), btn_font_plus);
     gtk_grid_attach(GTK_GRID(controls_grid), font_box, 0, 4, 2, 1);
 
+    // Ephemeris UT Toggle
+    GtkWidget *cb_ut = gtk_check_button_new_with_label("Ephemeris in UT");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ut), sky_options.ephemeris_use_ut);
+    g_signal_connect(cb_ut, "toggled", G_CALLBACK(on_ephemeris_ut_toggled), NULL);
+    gtk_grid_attach(GTK_GRID(controls_grid), cb_ut, 0, 5, 2, 1);
+
     // Status Label
-    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 5, 2, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 6, 2, 1);
 
     // Target List Frame (Right Side of Bottom)
     GtkWidget *targets_frame = gtk_frame_new("Targets");
