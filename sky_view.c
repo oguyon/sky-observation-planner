@@ -509,7 +509,14 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     // Ephemeris Box
     {
-        double jd = get_julian_day(*current_dt);
+        // Use Noon JD to ensure we get events for the "current local day" (Morning Rise, Evening Set)
+        DateTime noon_dt = *current_dt;
+        noon_dt.hour = 12; noon_dt.minute = 0; noon_dt.second = 0;
+        double jd_noon = get_julian_day(noon_dt);
+
+        // Original JD for phase calculation (current time)
+        double jd_now = get_julian_day(*current_dt);
+
         struct ln_lnlat_posn observer = {current_loc->lat, current_loc->lon};
         struct ln_rst_time rst;
 
@@ -520,20 +527,20 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         double tz = current_options->ephemeris_use_ut ? 0.0 : current_dt->timezone_offset;
 
         // Solar
-        ln_get_solar_rst_horizon(jd, &observer, -0.833, &rst);
+        ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
         format_rst_time(rst.set, tz, buf_sunset, 64, "Sunset");
         format_rst_time(rst.rise, tz, buf_sunrise, 64, "Sunrise");
 
-        ln_get_solar_rst_horizon(jd, &observer, -18.0, &rst);
+        ln_get_solar_rst_horizon(jd_noon, &observer, -18.0, &rst);
         format_rst_time(rst.set, tz, buf_tw_start, 64, "Astro Tw. Start");
         format_rst_time(rst.rise, tz, buf_tw_end, 64, "Astro Tw. End");
 
         // Lunar
-        ln_get_lunar_rst(jd, &observer, &rst);
+        ln_get_lunar_rst(jd_noon, &observer, &rst);
         format_rst_time(rst.rise, tz, buf_mr, 64, "Moon Rise");
         format_rst_time(rst.set, tz, buf_ms, 64, "Moon Set");
 
-        double phase = ln_get_lunar_disk(jd); // 0..1
+        double phase = ln_get_lunar_disk(jd_now); // 0..1
         snprintf(buf_mill, 64, "Moon Illum: %.1f%%", phase * 100.0);
 
         const char *lines[] = {buf_sunset, buf_tw_start, buf_tw_end, buf_sunrise, buf_mr, buf_ms, buf_mill};
