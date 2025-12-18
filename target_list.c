@@ -9,6 +9,7 @@ struct TargetList {
     Target *targets;
     int count;
     int capacity;
+    bool visible;
 };
 
 static TargetList **lists = NULL;
@@ -57,6 +58,7 @@ TargetList *target_list_create(const char *name) {
     list->targets = NULL;
     list->count = 0;
     list->capacity = 0;
+    list->visible = true;
 
     lists[list_count++] = list;
     notify_change();
@@ -220,6 +222,18 @@ void target_list_deserialize_and_add(TargetList *list, const char *data) {
     }
     json_decref(arr);
     notify_change();
+}
+
+void target_list_set_visible(TargetList *list, bool visible) {
+    if (list) {
+        list->visible = visible;
+        notify_change();
+    }
+}
+
+bool target_list_is_visible(TargetList *list) {
+    if (list) return list->visible;
+    return false;
 }
 
 void target_list_set_change_callback(void (*cb)(void)) {

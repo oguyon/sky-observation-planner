@@ -278,6 +278,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     int num_lists = target_list_get_list_count();
     for (int l = 0; l < num_lists; l++) {
         TargetList *tl = target_list_get_list_by_index(l);
+        if (!target_list_is_visible(tl)) continue;
+
         int cnt = target_list_get_count(tl);
         for (int i=0; i<cnt; i++) {
             Target *tgt = target_list_get_target(tl, i);

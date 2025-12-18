@@ -3,6 +3,7 @@
 
 #include <libnova/libnova.h>
 #include <jansson.h>
+#include <stdbool.h>
 
 typedef struct {
     char name[64];
@@ -28,6 +29,10 @@ Target *target_list_get_target(TargetList *list, int index);
 void target_list_add_target(TargetList *list, const char *name, double ra, double dec, double mag);
 void target_list_remove_target(TargetList *list, int index);
 void target_list_clear(TargetList *list);
+
+// Visibility
+void target_list_set_visible(TargetList *list, bool visible);
+bool target_list_is_visible(TargetList *list);
 
 // Serialization
 int target_list_save(TargetList *list, const char *filename);

@@ -44,7 +44,8 @@ SkyViewOptions sky_options = {
     .star_size_ma = 0.4, // Default requested
     .show_star_colors = FALSE,
     .star_saturation = 1.0,
-    .auto_star_settings = TRUE // Default requested
+    .auto_star_settings = TRUE, // Default requested
+    .font_scale = 1.0
 };
 
 // UI Widgets for Target List
@@ -64,6 +65,12 @@ static void update_all_views() {
 
 TargetList *get_active_target_list() {
     return active_target_list;
+}
+
+static void on_list_visibility_toggled(GtkCheckButton *btn, gpointer user_data) {
+    TargetList *list = (TargetList*)user_data;
+    target_list_set_visible(list, gtk_check_button_get_active(btn));
+    update_all_views();
 }
 
 static void on_target_selection_changed(GtkSelectionModel *model, guint position, guint n_items, gpointer user_data) {
@@ -98,16 +105,20 @@ static void on_target_list_changed() {
         TargetList *tl = g_object_get_data(G_OBJECT(page), "target_list");
         if (tl) {
             // Find the column view
-            // Structure: Box -> ScrolledWindow -> ColumnView
-            GtkWidget *sc = gtk_widget_get_first_child(page);
-            while (sc && !GTK_IS_SCROLLED_WINDOW(sc)) {
-                 sc = gtk_widget_get_next_sibling(sc);
+            // Structure: Box -> CheckButton -> ScrolledWindow -> ColumnView
+            // We iterate children to find ScrolledWindow
+            GtkWidget *child = gtk_widget_get_first_child(page);
+            GtkWidget *scrolled = NULL;
+            while (child) {
+                 if (GTK_IS_SCROLLED_WINDOW(child)) {
+                     scrolled = child;
+                     break;
+                 }
+                 child = gtk_widget_get_next_sibling(child);
             }
-            if (!sc) continue;
+            if (!scrolled) continue;
 
-            // GTK4 structure is ScrolledWindow -> Viewport -> ColumnView usually, or direct child?
-            // gtk_scrolled_window_get_child() returns the child.
-            GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(sc));
+            GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
 
             if (GTK_IS_COLUMN_VIEW(col_view)) {
                 // Rebuild model
@@ -150,6 +161,12 @@ static void target_list_bind_cb(GtkSignalListItemFactory *self, GtkListItem *lis
 static GtkWidget *create_view_for_list(TargetList *list) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     g_object_set_data(G_OBJECT(box), "target_list", list); // Store reference
+
+    // Visibility Toggle
+    GtkWidget *check_visible = gtk_check_button_new_with_label("Show on Map");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check_visible), target_list_is_visible(list));
+    g_signal_connect(check_visible, "toggled", G_CALLBACK(on_list_visibility_toggled), list);
+    gtk_box_append(GTK_BOX(box), check_visible);
 
     GtkWidget *scrolled_list = gtk_scrolled_window_new();
     gtk_widget_set_vexpand(scrolled_list, TRUE);
@@ -503,6 +520,20 @@ static void on_saturation_changed(GtkRange *range, gpointer user_data) {
     sky_view_redraw();
 }
 
+static void on_font_plus_clicked(GtkButton *btn, gpointer user_data) {
+    sky_options.font_scale += 0.1;
+    sky_view_redraw();
+}
+
+static void on_font_minus_clicked(GtkButton *btn, gpointer user_data) {
+    if (sky_options.font_scale > 0.2) {
+        sky_options.font_scale -= 0.1;
+        sky_view_redraw();
+    }
+}
+
+static void on_list_visibility_toggled(GtkCheckButton *btn, gpointer user_data);
+
 static void activate(GtkApplication *app, gpointer user_data) {
     if (load_catalog() != 0) {
         fprintf(stderr, "Failed to load catalog.\n");
@@ -710,8 +741,19 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(scale_sat, "value-changed", G_CALLBACK(on_saturation_changed), NULL);
     gtk_box_append(GTK_BOX(star_box), scale_sat);
 
+    // Font Size
+    GtkWidget *font_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_append(GTK_BOX(font_box), gtk_label_new("Font Size:"));
+    GtkWidget *btn_font_minus = gtk_button_new_with_label("-");
+    g_signal_connect(btn_font_minus, "clicked", G_CALLBACK(on_font_minus_clicked), NULL);
+    gtk_box_append(GTK_BOX(font_box), btn_font_minus);
+    GtkWidget *btn_font_plus = gtk_button_new_with_label("+");
+    g_signal_connect(btn_font_plus, "clicked", G_CALLBACK(on_font_plus_clicked), NULL);
+    gtk_box_append(GTK_BOX(font_box), btn_font_plus);
+    gtk_grid_attach(GTK_GRID(controls_grid), font_box, 0, 4, 2, 1);
+
     // Status Label
-    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 4, 2, 1);
+    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 5, 2, 1);
 
     // Target List Frame (Right Side of Bottom)
     GtkWidget *targets_frame = gtk_frame_new("Targets");

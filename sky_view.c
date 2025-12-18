@@ -3,7 +3,13 @@
 #include "target_list.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <libnova/julian_day.h>
+#include <libnova/rise_set.h>
+#include <libnova/solar.h>
+#include <libnova/lunar.h>
+#include <libnova/angular_separation.h>
 
 static Location *current_loc;
 static DateTime *current_dt;
@@ -36,7 +42,6 @@ double sky_view_get_zoom() {
 }
 
 // Helper to project Alt/Az to X/Y (0-1 range from center)
-// Returns 1 if valid (above horizon), 0 otherwise
 static int project(double alt, double az, double *x, double *y) {
     if (alt < 0) return 0;
     double r = 1.0 - alt / 90.0;
@@ -83,6 +88,49 @@ static void draw_text_centered(cairo_t *cr, double x, double y, const char *text
     cairo_show_text(cr, text);
 }
 
+// Helper to draw a styled text box (opaque black, white outline)
+// Anchored at top-left (x, y) unless right_align is true (then x is right edge)
+static void draw_styled_text_box(cairo_t *cr, double x, double y, const char **lines, int count, int right_align) {
+    if (count <= 0) return;
+
+    double font_size = 12.0 * (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
+    cairo_set_font_size(cr, font_size);
+
+    double max_w = 0;
+    double total_h = 0;
+    double line_h = font_size * 1.2;
+    double padding = 5.0;
+
+    for(int i=0; i<count; i++) {
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, lines[i], &ext);
+        if (ext.width > max_w) max_w = ext.width;
+    }
+    total_h = count * line_h;
+
+    double box_w = max_w + 2 * padding;
+    double box_h = total_h + 2 * padding;
+
+    double draw_x = right_align ? (x - box_w) : x;
+    double draw_y = y;
+
+    // Fill Black
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_rectangle(cr, draw_x, draw_y, box_w, box_h);
+    cairo_fill_preserve(cr);
+
+    // Stroke White
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    // Draw Text
+    for(int i=0; i<count; i++) {
+        cairo_move_to(cr, draw_x + padding, draw_y + padding + (i + 1) * line_h - (line_h - font_size)/2); // Approx baseline
+        cairo_show_text(cr, lines[i]);
+    }
+}
+
 // Simple B-V to RGB mapping
 static void bv_to_rgb(double bv, double *r, double *g, double *b) {
     if (bv < 0.0) { *r = 0.6; *g = 0.6; *b = 1.0; } // Blue
@@ -97,6 +145,24 @@ static void bv_to_rgb(double bv, double *r, double *g, double *b) {
         *r = 1.0; *g = 1.0 - 0.4*t; *b = 0.5 - 0.5*t;
     } else {
         *r = 1.0; *g = 0.6; *b = 0.0; // Red
+    }
+}
+
+// Helpers for Ephemeris formatting
+static void format_rst_time(double jd, double timezone, char *buf, size_t len, const char *label) {
+    if (jd < 0) {
+        snprintf(buf, len, "%s: --:--", label);
+    } else {
+        // Convert JD to Date
+        struct ln_date date;
+        ln_get_date(jd, &date);
+        // Add Timezone
+        double h = date.hours + date.minutes/60.0 + date.seconds/3600.0 + timezone;
+        while (h < 0) h += 24.0;
+        while (h >= 24.0) h -= 24.0;
+        int hh = (int)h;
+        int mm = (int)((h - hh) * 60.0);
+        snprintf(buf, len, "%s: %02d:%02d", label, hh, mm);
     }
 }
 
@@ -333,6 +399,10 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     int num_lists = target_list_get_list_count();
     for (int l = 0; l < num_lists; l++) {
         TargetList *tl = target_list_get_list_by_index(l);
+
+        // Visibility Check
+        if (!target_list_is_visible(tl)) continue;
+
         int cnt = target_list_get_count(tl);
         for (int i=0; i<cnt; i++) {
             Target *tgt = target_list_get_target(tl, i);
@@ -419,12 +489,50 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         while (lst < 0.0) lst += 24.0;
         while (lst > 24.0) lst -= 24.0;
         double jd_ut = get_julian_day(*current_dt); struct ln_date ut_date; ln_get_date(jd_ut, &ut_date);
-        cairo_set_source_rgba(cr, 0, 0, 0, 0.5); cairo_rectangle(cr, 10, 10, 120, 55); cairo_fill(cr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        char buf[256];
-        snprintf(buf, sizeof(buf), "Local: %02d:%02d", current_dt->hour, current_dt->minute); cairo_move_to(cr, 15, 25); cairo_show_text(cr, buf);
-        snprintf(buf, sizeof(buf), "UT: %02d:%02d", ut_date.hours, ut_date.minutes); cairo_move_to(cr, 15, 40); cairo_show_text(cr, buf);
-        snprintf(buf, sizeof(buf), "LST: %02d:%02d", (int)lst, (int)((lst - (int)lst)*60)); cairo_move_to(cr, 15, 55); cairo_show_text(cr, buf);
+
+        char buf_loc[64], buf_ut[64], buf_lst[64];
+        snprintf(buf_loc, 64, "Local: %02d:%02d", current_dt->hour, current_dt->minute);
+        snprintf(buf_ut, 64, "UT: %02d:%02d", ut_date.hours, ut_date.minutes);
+        snprintf(buf_lst, 64, "LST: %02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
+
+        const char *lines[] = {buf_loc, buf_ut, buf_lst};
+        draw_styled_text_box(cr, 10, 10, lines, 3, 0);
+    }
+
+    // Ephemeris Box
+    {
+        double jd = get_julian_day(*current_dt);
+        struct ln_lnlat_posn observer = {current_loc->lat, current_loc->lon};
+        struct ln_rst_time rst;
+
+        char buf_sunset[64], buf_tw_start[64], buf_tw_end[64], buf_sunrise[64];
+        char buf_mr[64], buf_ms[64], buf_mill[64];
+
+        // Solar
+        ln_get_solar_rst_horizon(jd, &observer, -0.833, &rst);
+        format_rst_time(rst.set, current_dt->timezone_offset, buf_sunset, 64, "Sunset");
+        format_rst_time(rst.rise, current_dt->timezone_offset, buf_sunrise, 64, "Sunrise");
+
+        ln_get_solar_rst_horizon(jd, &observer, -18.0, &rst);
+        format_rst_time(rst.set, current_dt->timezone_offset, buf_tw_start, 64, "Astro Tw. Start");
+        format_rst_time(rst.rise, current_dt->timezone_offset, buf_tw_end, 64, "Astro Tw. End");
+
+        // Lunar
+        ln_get_lunar_rst(jd, &observer, &rst);
+        format_rst_time(rst.rise, current_dt->timezone_offset, buf_mr, 64, "Moon Rise");
+        format_rst_time(rst.set, current_dt->timezone_offset, buf_ms, 64, "Moon Set");
+
+        double phase = ln_get_lunar_disk(jd); // 0..1
+        snprintf(buf_mill, 64, "Moon Illum: %.1f%%", phase * 100.0);
+
+        const char *lines[] = {buf_sunset, buf_tw_start, buf_tw_end, buf_sunrise, buf_mr, buf_ms, buf_mill};
+
+        // Draw below Time box. Estimate Time box height.
+        // Base size 12 * scale * 1.2 * 3 lines + 10 padding ~ 55 * scale.
+        double scale = (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
+        double y_offset = 10 + (12.0 * scale * 1.2 * 3 + 10) + 10;
+
+        draw_styled_text_box(cr, 10, y_offset, lines, 7, 0);
     }
 
     if (cursor_alt >= 0) {
@@ -435,39 +543,24 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         ln_get_solar_equ_coords(jd, &sun_equ); ln_get_lunar_equ_coords(jd, &moon_equ);
         double dist_sun = ln_get_angular_separation(&equ, &sun_equ);
         double dist_moon = ln_get_angular_separation(&equ, &moon_equ);
-        cairo_set_source_rgba(cr, 0, 0, 0, 0.5); cairo_rectangle(cr, width - 160, 10, 150, 80); cairo_fill(cr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        char buf[256];
-        snprintf(buf, sizeof(buf), "Alt: %.1f Az: %.1f", cursor_alt, cursor_az); cairo_move_to(cr, width - 155, 25); cairo_show_text(cr, buf);
-        snprintf(buf, sizeof(buf), "RA: %.2f Dec: %.2f", equ.ra, equ.dec); cairo_move_to(cr, width - 155, 40); cairo_show_text(cr, buf);
-        snprintf(buf, sizeof(buf), "Sun Dist: %.1f", dist_sun); cairo_move_to(cr, width - 155, 55); cairo_show_text(cr, buf);
-        snprintf(buf, sizeof(buf), "Moon Dist: %.1f", dist_moon); cairo_move_to(cr, width - 155, 70); cairo_show_text(cr, buf);
-        snprintf(buf, sizeof(buf), "S:%.1f,%.1f C:%.1f,%.1f", sun_equ.ra, sun_equ.dec, equ.ra, equ.dec); cairo_move_to(cr, width - 155, 85); cairo_set_font_size(cr, 10); cairo_show_text(cr, buf);
+
+        char buf_alt[64], buf_az[64], buf_sun[64], buf_moon[64], buf_coords[64];
+        snprintf(buf_alt, 64, "Alt: %.1f", cursor_alt);
+        snprintf(buf_az, 64, "Az: %.1f", cursor_az);
+        snprintf(buf_sun, 64, "Sun Dist: %.1f", dist_sun);
+        snprintf(buf_moon, 64, "Moon Dist: %.1f", dist_moon);
+        snprintf(buf_coords, 64, "RA:%.2f Dec:%.2f", equ.ra, equ.dec);
+
+        const char *lines[] = {buf_alt, buf_az, buf_sun, buf_moon, buf_coords};
+        draw_styled_text_box(cr, width - 10, 10, lines, 5, 1); // Right aligned
     }
 
     // Star Count Box (After Restore)
     {
         char count_buf[64];
         snprintf(count_buf, 64, "Stars: %d / %d", stars_visible_in_view, stars_total_brighter);
-        cairo_set_font_size(cr, 12);
-        cairo_text_extents_t ext;
-        cairo_text_extents(cr, count_buf, &ext);
-
-        double box_x = 10;
-        double box_y = height - 10 - ext.height - 10;
-        double box_w = ext.width + 20;
-        double box_h = ext.height + 20;
-
-        cairo_set_source_rgb(cr, 0, 0, 0); // Opaque Black
-        cairo_rectangle(cr, box_x, box_y, box_w, box_h);
-        cairo_fill_preserve(cr);
-
-        cairo_set_source_rgb(cr, 1, 1, 1); // White Outline
-        cairo_set_line_width(cr, 1.0);
-        cairo_stroke(cr);
-
-        cairo_move_to(cr, box_x + 10, box_y + 10 + ext.height);
-        cairo_show_text(cr, count_buf);
+        const char *lines[] = {count_buf};
+        draw_styled_text_box(cr, 10, height - 10 - 30, lines, 1, 0); // Simplified position logic
     }
 
     // Zoom and FOV Info (Bottom Right)
@@ -475,26 +568,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         double fov = 180.0 / view_zoom;
         char info_buf[64];
         snprintf(info_buf, 64, "Zoom: %.2f | FOV: %.1f%s", view_zoom, fov, "\u00B0"); // degree symbol
-
-        cairo_set_font_size(cr, 12);
-        cairo_text_extents_t ext;
-        cairo_text_extents(cr, info_buf, &ext);
-
-        double box_w = ext.width + 20;
-        double box_h = ext.height + 20;
-        double box_x = width - 10 - box_w;
-        double box_y = height - 10 - box_h;
-
-        cairo_set_source_rgb(cr, 0, 0, 0);
-        cairo_rectangle(cr, box_x, box_y, box_w, box_h);
-        cairo_fill_preserve(cr);
-
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_set_line_width(cr, 1.0);
-        cairo_stroke(cr);
-
-        cairo_move_to(cr, box_x + 10, box_y + 10 + ext.height);
-        cairo_show_text(cr, info_buf);
+        const char *lines[] = {info_buf};
+        draw_styled_text_box(cr, width - 10, height - 10 - 30, lines, 1, 1);
     }
 }
 
