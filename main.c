@@ -90,18 +90,10 @@ static void on_target_selection_changed(GtkSelectionModel *model, guint position
 // Callback from target_list module
 static void on_target_list_changed() {
     update_all_views();
-    // We also need to refresh the current tab's list view, or all of them.
-    // Ideally we find the widget associated with the list and update it.
-    // For simplicity, we can just rebuild the current page's model if we can find it.
 
     int pages = gtk_notebook_get_n_pages(target_notebook);
     for (int i=0; i<pages; i++) {
         GtkWidget *page = gtk_notebook_get_nth_page(target_notebook, i);
-        // The page child is a GtkScrolledWindow containing a GtkColumnView
-        GtkWidget *scrolled = gtk_widget_get_first_child(page); // Box -> Scrolled
-        // Wait, structure: Page is a Box. Box has ScrolledWindow.
-        // Let's rely on standard widget traversal or store references.
-        // To keep it simple: we can store the TargetList pointer in the page using g_object_set_data.
 
         TargetList *tl = g_object_get_data(G_OBJECT(page), "target_list");
         if (tl) {
@@ -532,8 +524,6 @@ static void on_font_minus_clicked(GtkButton *btn, gpointer user_data) {
         sky_view_redraw();
     }
 }
-
-static void on_list_visibility_toggled(GtkCheckButton *btn, gpointer user_data);
 
 static void on_ephemeris_ut_toggled(GtkCheckButton *btn, gpointer user_data) {
     sky_options.ephemeris_use_ut = gtk_check_button_get_active(btn);
