@@ -54,7 +54,7 @@ SkyViewOptions sky_options = {
 static GtkNotebook *target_notebook = NULL;
 static TargetList *active_target_list = NULL;
 
-// UI Widgets for Star Settings (needed for auto update?)
+// UI Widgets for Star Settings
 static GtkLabel *lbl_site_info = NULL;
 static GtkRange *range_mag = NULL;
 static GtkRange *range_m0 = NULL;

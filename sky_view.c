@@ -44,6 +44,8 @@ double sky_view_get_zoom() {
 }
 
 // Helper to project Alt/Az to X/Y (0-1 range from center)
+// North Up, South Down. West Left, East Right.
+// Az 0=South, 180=North.
 static int project(double alt, double az, double *x, double *y) {
     if (alt < 0) return 0;
     double r = 1.0 - alt / 90.0;
@@ -97,7 +99,6 @@ static void draw_text_centered(cairo_t *cr, double x, double y, const char *text
 }
 
 // Helper to draw a styled text box (opaque black, white outline)
-// Anchored at top-left (x, y) unless right_align is true (then x is right edge)
 static void draw_styled_text_box(cairo_t *cr, double x, double y, const char **lines, int count, int right_align) {
     if (count <= 0) return;
 
@@ -134,7 +135,7 @@ static void draw_styled_text_box(cairo_t *cr, double x, double y, const char **l
 
     // Draw Text
     for(int i=0; i<count; i++) {
-        cairo_move_to(cr, draw_x + padding, draw_y + padding + (i + 1) * line_h - (line_h - font_size)/2); // Approx baseline
+        cairo_move_to(cr, draw_x + padding, draw_y + padding + (i + 1) * line_h - (line_h - font_size)/2);
         cairo_show_text(cr, lines[i]);
     }
 }
@@ -156,15 +157,12 @@ static void bv_to_rgb(double bv, double *r, double *g, double *b) {
     }
 }
 
-// Helpers for Ephemeris formatting
 static void format_rst_time(double jd, double timezone, char *buf, size_t len, const char *label) {
     if (jd < 0) {
         snprintf(buf, len, "%s: --:--", label);
     } else {
-        // Convert JD to Date
         struct ln_date date;
         ln_get_date(jd, &date);
-        // Add Timezone
         double h = date.hours + date.minutes/60.0 + date.seconds/3600.0 + timezone;
         while (h < 0) h += 24.0;
         while (h >= 24.0) h -= 24.0;
@@ -179,7 +177,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     double cx = width / 2.0;
     double cy = height / 2.0;
 
-    // Calculate effective star settings
     double effective_limit = current_options->star_mag_limit;
     double effective_m0 = current_options->star_size_m0;
     double effective_ma = current_options->star_size_ma;
@@ -204,7 +201,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     cairo_save(cr);
     cairo_clip(cr);
 
-    // Directions
+    // Directions (N=180, S=0)
     struct { char *label; double az; } dirs[] = {{"N", 180}, {"S", 0}, {"E", 270}, {"W", 90}};
     cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
     for (int i=0; i<4; i++) {
@@ -347,7 +344,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                 }
 
                 double calc_size = (effective_m0 - stars[i].mag) * effective_ma;
-                // If smaller than 1.0, clamp to 1.0 and adjust color/alpha
                 double draw_size = calc_size;
                 double brightness = 1.0;
 
@@ -361,13 +357,11 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                     double r, g, b;
                     bv_to_rgb(stars[i].bv, &r, &g, &b);
 
-                    // Apply Saturation
                     double sat = current_options->star_saturation;
                     r = 1.0 + (r - 1.0) * sat;
                     g = 1.0 + (g - 1.0) * sat;
                     b = 1.0 + (b - 1.0) * sat;
 
-                    // Clamp
                     if (r < 0) r = 0;
                     if (r > 1) r = 1;
                     if (g < 0) g = 0;
@@ -407,8 +401,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     int num_lists = target_list_get_list_count();
     for (int l = 0; l < num_lists; l++) {
         TargetList *tl = target_list_get_list_by_index(l);
-
-        // Visibility Check
         if (!target_list_is_visible(tl)) continue;
 
         int cnt = target_list_get_count(tl);
@@ -559,8 +551,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
         const char *lines[] = {buf_header, buf_sunset, buf_tw_start, buf_tw_end, buf_sunrise, buf_mr, buf_ms, buf_mill};
 
-        // Draw below Time box. Estimate Time box height.
-        // Base size 12 * scale * 1.2 * 6 lines + 10 padding ~ 90 * scale.
         double scale = (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
         double y_offset = 10 + (12.0 * scale * 1.2 * 6 + 10) + 10;
 
@@ -662,15 +652,36 @@ static void on_scroll(GtkEventControllerScroll *controller, double dx, double dy
 }
 
 static double drag_start_pan_y = 0;
-static double drag_start_rotation = 0;
-static double drag_start_x = 0;
-static double drag_start_y = 0;
+// Drag State for precise positioning
+static double drag_target_u = 0;
+static double drag_target_v = 0;
+static double drag_target_dist = 0;
+static double drag_target_v_rot_sign = 1.0;
 
 static void on_drag_begin(GtkGestureDrag *gesture, double start_x, double start_y, gpointer user_data) {
     drag_start_pan_y = view_pan_y;
-    drag_start_rotation = view_rotation;
-    drag_start_x = start_x;
-    drag_start_y = start_y;
+
+    GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    int width = gtk_widget_get_width(widget);
+    int height = gtk_widget_get_height(widget);
+    double radius = (width < height ? width : height) / 2.0 - 10;
+    double cx = width / 2.0;
+    double cy = height / 2.0;
+
+    double nx = (start_x - cx) / radius;
+    double ny = (start_y - cy) / radius;
+
+    double u, v;
+    untransform_point(nx, ny, &u, &v);
+
+    drag_target_u = u;
+    drag_target_v = v;
+    drag_target_dist = sqrt(u*u + v*v);
+
+    // Calculate initial v_rot state to preserve hemisphere (North vs South of Zenith)
+    double s_v = ny - view_pan_y;
+    double v_rot = s_v / view_zoom;
+    drag_target_v_rot_sign = (v_rot >= 0) ? 1.0 : -1.0;
 }
 
 static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, double offset_y, gpointer user_data) {
@@ -681,40 +692,60 @@ static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, dou
     double cx = width / 2.0;
     double cy = height / 2.0;
 
-    // --- Pan Y (Vertical shift of zenith) ---
-    // Moves the projection vertically on screen. 1:1 with mouse movement.
-    // view_pan_y is in normalized units relative to radius.
-    // offset_y is in pixels.
-    // delta_pan_y * radius = offset_y.
-    view_pan_y = drag_start_pan_y + (offset_y / radius);
+    double start_x, start_y;
+    gtk_gesture_drag_get_start_point(gesture, &start_x, &start_y);
+
+    double current_x = start_x + offset_x;
+    double current_y = start_y + offset_y;
+
+    // Target normalized screen position
+    double tx = (current_x - cx) / radius;
+    double ty_req = (current_y - cy) / radius;
+
+    // Avoid singularity at Zenith
+    if (drag_target_dist < 0.001) {
+        // Just Pan Y
+        view_pan_y = ty_req; // v_rot approx 0
+        if (view_pan_y > 0) view_pan_y = 0;
+        sky_view_redraw();
+        return;
+    }
+
+    // 1. Solve Rotation (view_rotation) to match Mouse X (tx)
+    // We want u_rot = tx / Zoom.
+    // u_rot^2 + v_rot^2 = dist^2.
+    // Constrain u_rot to valid range [-dist, dist]
+    double u_rot_target = tx / view_zoom;
+    if (u_rot_target > drag_target_dist) u_rot_target = drag_target_dist;
+    if (u_rot_target < -drag_target_dist) u_rot_target = -drag_target_dist;
+
+    double v_rot_mag = sqrt(drag_target_dist * drag_target_dist - u_rot_target * u_rot_target);
+    double v_rot_target = v_rot_mag * drag_target_v_rot_sign;
+
+    // We want to rotate (drag_target_u, drag_target_v) to (u_rot_target, v_rot_target).
+    // (u, v) rotated by theta is (u', v').
+    // theta = angle(u', v') - angle(u, v).
+    double angle_target = atan2(v_rot_target, u_rot_target);
+    double angle_source = atan2(drag_target_v, drag_target_u);
+    // Standard rotation matrix is [cos -sin; sin cos] which rotates CCW.
+    // My transform_point uses [cos -sin; sin cos].
+    // So 'view_rotation' is the CCW angle.
+    // Wait, let's verify transform_point again.
+    // u_rot = u cos - v sin.
+    // v_rot = u sin + v cos.
+    // This rotates (u,v) by angle 'view_rotation' CCW.
+    // So theta = view_rotation.
+    view_rotation = angle_target - angle_source;
+
+    // 2. Solve Pan Y to match Mouse Y (ty_req)
+    // ty = v_rot * Zoom + PanY
+    view_pan_y = ty_req - v_rot_target * view_zoom;
 
     // Constraint: Zenith not below center (pan_y <= 0)
     if (view_pan_y > 0) view_pan_y = 0;
 
-    // Constraint: Pan X is always 0 (Zenith stays on vertical centerline)
+    // Constraint: Pan X is always 0
     view_pan_x = 0;
-
-
-    // --- Drag X -> Rotation (Azimuth) ---
-    // User request: Point under cursor should stay fixed (tangentially).
-    // This implies angular change d_theta = dx / r_screen.
-    // User request: "North of zenith (Top): Correct direction. South: Invert."
-
-    // Calculate start position relative to center
-    double rel_x = drag_start_x - cx;
-    double rel_y = drag_start_y - cy;
-    double dist = sqrt(rel_x*rel_x + rel_y*rel_y);
-
-    // Clamp distance to avoid infinite speed near center
-    double effective_dist = dist;
-    if (effective_dist < 20.0) effective_dist = 20.0;
-
-    // Calculate rotation delta (radians)
-    // offset_x is pixels.
-    // delta_theta = (offset_x / dist)
-    double delta_rot = (offset_x / effective_dist);
-
-    view_rotation = drag_start_rotation + delta_rot;
 
     sky_view_redraw();
 }
