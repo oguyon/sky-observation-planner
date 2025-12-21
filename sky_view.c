@@ -105,19 +105,52 @@ static void draw_styled_text_box(cairo_t *cr, double x, double y, const char **l
     double font_size = 12.0 * (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
     cairo_set_font_size(cr, font_size);
 
-    double max_w = 0;
+    double max_w_left = 0;
+    double max_w_right = 0;
     double total_h = 0;
     double line_h = font_size * 1.2;
     double padding = 5.0;
+    double gap = 10.0;
 
+    // Measure pass
     for(int i=0; i<count; i++) {
-        cairo_text_extents_t ext;
-        cairo_text_extents(cr, lines[i], &ext);
-        if (ext.width > max_w) max_w = ext.width;
-    }
-    total_h = count * line_h;
+        const char *sep = strchr(lines[i], '|');
+        if (sep) {
+            char left[64], right[64];
+            int len_l = sep - lines[i];
+            strncpy(left, lines[i], len_l); left[len_l] = '\0';
+            strcpy(right, sep + 1);
 
-    double box_w = max_w + 2 * padding;
+            cairo_text_extents_t ext_l, ext_r;
+            cairo_text_extents(cr, left, &ext_l);
+            cairo_text_extents(cr, right, &ext_r);
+            if (ext_l.width > max_w_left) max_w_left = ext_l.width;
+            if (ext_r.width > max_w_right) max_w_right = ext_r.width;
+        } else {
+            cairo_text_extents_t ext;
+            cairo_text_extents(cr, lines[i], &ext);
+            // Treat single lines as covering the full width (contributing to left for simplicity of max_w calc)
+            double w = ext.width;
+            if (w > max_w_left) max_w_left = w; // Provisional, will adjust total max_w later
+        }
+    }
+
+    // If we have split lines, the box width needs to accommodate both columns + gap
+    double box_w = max_w_left + 2 * padding;
+    if (max_w_right > 0) {
+        box_w = max_w_left + gap + max_w_right + 2 * padding;
+    }
+
+    // Re-check single lines against total box width
+    for(int i=0; i<count; i++) {
+        if (!strchr(lines[i], '|')) {
+            cairo_text_extents_t ext;
+            cairo_text_extents(cr, lines[i], &ext);
+            if (ext.width + 2*padding > box_w) box_w = ext.width + 2*padding;
+        }
+    }
+
+    total_h = count * line_h;
     double box_h = total_h + 2 * padding;
 
     double draw_x = right_align ? (x - box_w) : x;
@@ -135,8 +168,28 @@ static void draw_styled_text_box(cairo_t *cr, double x, double y, const char **l
 
     // Draw Text
     for(int i=0; i<count; i++) {
-        cairo_move_to(cr, draw_x + padding, draw_y + padding + (i + 1) * line_h - (line_h - font_size)/2);
-        cairo_show_text(cr, lines[i]);
+        double y_pos = draw_y + padding + (i + 1) * line_h - (line_h - font_size)/2;
+        const char *sep = strchr(lines[i], '|');
+
+        if (sep) {
+            char left[64], right[64];
+            int len_l = sep - lines[i];
+            strncpy(left, lines[i], len_l); left[len_l] = '\0';
+            strcpy(right, sep + 1);
+
+            // Left aligned
+            cairo_move_to(cr, draw_x + padding, y_pos);
+            cairo_show_text(cr, left);
+
+            // Right aligned (at right edge of box - padding)
+            cairo_text_extents_t ext_r;
+            cairo_text_extents(cr, right, &ext_r);
+            cairo_move_to(cr, draw_x + box_w - padding - ext_r.width, y_pos);
+            cairo_show_text(cr, right);
+        } else {
+            cairo_move_to(cr, draw_x + padding, y_pos);
+            cairo_show_text(cr, lines[i]);
+        }
     }
 }
 
@@ -157,9 +210,9 @@ static void bv_to_rgb(double bv, double *r, double *g, double *b) {
     }
 }
 
-static void format_rst_time(double jd, double timezone, char *buf, size_t len, const char *label) {
+static void format_time_only(double jd, double timezone, char *buf, size_t len) {
     if (jd < 0) {
-        snprintf(buf, len, "%s: --:--", label);
+        snprintf(buf, len, "--:--");
     } else {
         struct ln_date date;
         ln_get_date(jd, &date);
@@ -168,8 +221,22 @@ static void format_rst_time(double jd, double timezone, char *buf, size_t len, c
         while (h >= 24.0) h -= 24.0;
         int hh = (int)h;
         int mm = (int)((h - hh) * 60.0);
-        snprintf(buf, len, "%s: %02d:%02d", label, hh, mm);
+        snprintf(buf, len, "%02d:%02d", hh, mm);
     }
+}
+
+typedef struct {
+    double jd;
+    char label[32];
+    char time_str[16];
+} EphemEvent;
+
+static int compare_ephem_events(const void *a, const void *b) {
+    EphemEvent *ea = (EphemEvent *)a;
+    EphemEvent *eb = (EphemEvent *)b;
+    if (ea->jd < eb->jd) return -1;
+    if (ea->jd > eb->jd) return 1;
+    return 0;
 }
 
 static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data) {
@@ -519,42 +586,86 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         struct ln_rst_time rst;
 
         char buf_header[64];
-        char buf_sunset[64], buf_tw_start[64], buf_tw_end[64], buf_sunrise[64];
-        char buf_mr[64], buf_ms[64], buf_mill[64];
 
         // Timezone: 0 for UT, current_dt->timezone_offset for Local
         double tz = current_options->ephemeris_use_ut ? 0.0 : current_dt->timezone_offset;
 
-        snprintf(buf_header, 64, "Ephemeris (%s)", current_options->ephemeris_use_ut ? "UT" : "Local");
+        if (current_options->ephemeris_use_ut) {
+            snprintf(buf_header, 64, "Ephemeris (UT)");
+        } else {
+            snprintf(buf_header, 64, "Ephemeris (Local UTC%+.1f)", tz);
+        }
+
+        EphemEvent events[6];
+        int ev_count = 0;
 
         // Solar
         // libnova apparently returns the next set and rise events.
-        // For standard Northern Hemisphere observation (or typical convention),
-        // if rst.set is in morning and rst.rise in evening, labels might be swapped due to coordinate convention.
         // We trust the values: if 'Set' is 06:00, it's Sunrise. If 'Rise' is 18:00, it's Sunset.
-        // We swap them here to match user expectation and standard output.
         ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
-        format_rst_time(rst.rise, tz, buf_sunset, 64, "Sunset");
-        format_rst_time(rst.set, tz, buf_sunrise, 64, "Sunrise");
+
+        // Sunset (rst.rise)
+        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
+        strcpy(events[ev_count].label, "Sunset");
+        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
+        ev_count++;
+
+        // Sunrise (rst.set)
+        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
+        strcpy(events[ev_count].label, "Sunrise");
+        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
+        ev_count++;
 
         ln_get_solar_rst_horizon(jd_noon, &observer, -18.0, &rst);
-        format_rst_time(rst.set, tz, buf_tw_start, 64, "Astro Tw. Start");
-        format_rst_time(rst.rise, tz, buf_tw_end, 64, "Astro Tw. End");
 
-        // Lunar (Moon Rise/Set might also be swapped if coordinate system is consistent)
+        // Astro Tw. Start (rst.set)
+        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
+        strcpy(events[ev_count].label, "Astro Tw. Start");
+        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
+        ev_count++;
+
+        // Astro Tw. End (rst.rise)
+        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
+        strcpy(events[ev_count].label, "Astro Tw. End");
+        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
+        ev_count++;
+
+        // Lunar
         ln_get_lunar_rst(jd_noon, &observer, &rst);
-        format_rst_time(rst.set, tz, buf_mr, 64, "Moon Rise");
-        format_rst_time(rst.rise, tz, buf_ms, 64, "Moon Set");
+
+        // Moon Rise (rst.set)
+        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
+        strcpy(events[ev_count].label, "Moon Rise");
+        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
+        ev_count++;
+
+        // Moon Set (rst.rise)
+        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
+        strcpy(events[ev_count].label, "Moon Set");
+        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
+        ev_count++;
+
+        qsort(events, ev_count, sizeof(EphemEvent), compare_ephem_events);
+
+        char lines_buf[8][64];
+        const char *lines_ptr[8];
+
+        lines_ptr[0] = buf_header;
+
+        for(int i=0; i<ev_count; i++) {
+            snprintf(lines_buf[i], 64, "%s|%s", events[i].label, events[i].time_str);
+            lines_ptr[i+1] = lines_buf[i];
+        }
 
         double phase = ln_get_lunar_disk(jd_now); // 0..1
-        snprintf(buf_mill, 64, "Moon Illum: %.1f%%", phase * 100.0);
-
-        const char *lines[] = {buf_header, buf_sunset, buf_tw_start, buf_tw_end, buf_sunrise, buf_mr, buf_ms, buf_mill};
+        char buf_mill[64];
+        snprintf(buf_mill, 64, "Moon Illum|%.1f%%", phase * 100.0);
+        lines_ptr[ev_count+1] = buf_mill;
 
         double scale = (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
         double y_offset = 10 + (12.0 * scale * 1.2 * 6 + 10) + 10;
 
-        draw_styled_text_box(cr, 10, y_offset, lines, 8, 0);
+        draw_styled_text_box(cr, 10, y_offset, lines_ptr, ev_count + 2, 0);
     }
 
     if (cursor_alt >= 0) {
