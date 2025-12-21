@@ -26,6 +26,19 @@ static double view_pan_y = 0.0; // Normalized units
 static double view_rotation = 0.0; // Radians
 static Target *highlighted_target = NULL;
 
+static int use_horizon_projection = 0;
+static double horizon_center_az = 180.0; // Start facing South(0) or North(180)? Standard skymap N up -> S down. 180 is North.
+
+void sky_view_toggle_projection() {
+    use_horizon_projection = !use_horizon_projection;
+    if (use_horizon_projection) {
+        view_rotation = 0.0; // Force upright
+        // Reset pan Y?
+        view_pan_y = 0.0;
+    }
+    sky_view_redraw();
+}
+
 void sky_view_set_highlighted_target(Target *target) {
     highlighted_target = target;
     sky_view_redraw();
@@ -36,6 +49,7 @@ void sky_view_reset_view() {
     view_pan_x = 0.0;
     view_pan_y = 0.0;
     view_rotation = 0.0;
+    horizon_center_az = 180.0;
     sky_view_redraw();
 }
 
@@ -48,12 +62,49 @@ double sky_view_get_zoom() {
 // Az 0=South, 180=North.
 static int project(double alt, double az, double *x, double *y) {
     if (alt < 0) return 0;
-    double r = 1.0 - alt / 90.0;
-    if (r < 0) r = 0;
-    double az_rad = az * M_PI / 180.0;
-    *x = -r * sin(az_rad);
-    *y = -r * cos(az_rad);
-    return 1;
+
+    if (use_horizon_projection) {
+        // Stereographic projection centered at (Az=horizon_center_az, Alt=0)
+        double alt_rad = alt * M_PI / 180.0;
+        double az_rad = az * M_PI / 180.0;
+        double center_az_rad = horizon_center_az * M_PI / 180.0;
+        double d_az = az_rad - center_az_rad;
+
+        // Cartesian on sphere (X towards view center)
+        double X = cos(alt_rad) * cos(d_az);
+        double Y = cos(alt_rad) * sin(d_az);
+        double Z = sin(alt_rad);
+
+        // Project from X=-1 plane to X=0 plane (or standard Stereographic from pole)
+        // Standard formula from center (1,0,0) to plane x=0:
+        // y' = Y / (1+X), z' = Z / (1+X)
+        // Check for point behind viewer
+        if (X <= -0.99) return 0; // Singularity at antipode
+
+        double k = 1.0 / (1.0 + X);
+        double x_proj = k * Y; // Horizontal
+        double y_proj = k * Z; // Vertical (Up)
+
+        // Map to screen coordinates
+        // Zenith mode: x is Right, y is Up (actually down in screen coords, handled by -r)
+        // Here x_proj is Right (if West is Right?).
+        // In Zenith mode: Az 90 (W) -> x=-r (Left). Az 270 (E) -> x=r (Right).
+        // Let's match that.
+        // If center=180 (N). Az=90(W) -> d_az = -90. sin(-90)=-1. Y=0. X=0. Wait.
+        // d_az = 90 - 180 = -90. cos(-90)=0. X=0. Y=-1. x_proj = -1.
+        // So W -> Left. Matches.
+
+        *x = x_proj;
+        *y = -y_proj; // y_proj is Up, Screen Y is Down.
+        return 1;
+    } else {
+        double r = 1.0 - alt / 90.0;
+        if (r < 0) r = 0;
+        double az_rad = az * M_PI / 180.0;
+        *x = -r * sin(az_rad);
+        *y = -r * cos(az_rad);
+        return 1;
+    }
 }
 
 // Apply View Transformation (Rotate -> Scale -> Pan)
@@ -78,17 +129,44 @@ static void untransform_point(double tx, double ty, double *u, double *v) {
 }
 
 static void unproject(double x, double y, double *alt, double *az) {
-    double r = sqrt(x*x + y*y);
-    if (r > 1.0) {
-        *alt = -1; // Invalid
-        return;
+    if (use_horizon_projection) {
+        // Inverse Stereographic
+        // x = k Y, y = -k Z
+        // Y = x/k, Z = -y/k
+        // k = 1/(1+X)
+        // x = Y/(1+X), -y = Z/(1+X)
+        // Let u = x, v = -y.
+        // rho^2 = u^2 + v^2.
+        // X = (1 - rho^2)/(1 + rho^2)
+        // Y = 2u / (1 + rho^2)
+        // Z = 2v / (1 + rho^2)
+
+        double u = x;
+        double v = -y;
+        double rho2 = u*u + v*v;
+        double X = (1.0 - rho2) / (1.0 + rho2);
+        double Y = 2.0 * u / (1.0 + rho2);
+        double Z = 2.0 * v / (1.0 + rho2);
+
+        *alt = asin(Z) * 180.0 / M_PI;
+        double d_az = atan2(Y, X) * 180.0 / M_PI;
+        *az = horizon_center_az + d_az;
+
+        while (*az < 0) *az += 360.0;
+        while (*az >= 360.0) *az -= 360.0;
+    } else {
+        double r = sqrt(x*x + y*y);
+        if (r > 1.0) {
+            *alt = -1; // Invalid
+            return;
+        }
+        *alt = 90.0 * (1.0 - r);
+        double angle = atan2(-x, -y);
+        *az = angle * 180.0 / M_PI;
+        if (*az < 0) *az += 360.0;
+        *az += 180.0;
+        if (*az >= 360.0) *az -= 360.0;
     }
-    *alt = 90.0 * (1.0 - r);
-    double angle = atan2(-x, -y);
-    *az = angle * 180.0 / M_PI;
-    if (*az < 0) *az += 360.0;
-    *az += 180.0;
-    if (*az >= 360.0) *az -= 360.0;
 }
 
 static void draw_text_centered(cairo_t *cr, double x, double y, const char *text) {
@@ -556,20 +634,22 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         while (lst < 0.0) lst += 24.0;
         while (lst > 24.0) lst -= 24.0;
         double jd_ut = get_julian_day(*current_dt); struct ln_date ut_date; ln_get_date(jd_ut, &ut_date);
+        double mjd = jd_ut - 2400000.5;
 
-        char buf_loc[64], buf_ut[64], buf_lst[64];
+        char buf_loc[64], buf_ut[64], buf_lst[64], buf_mjd[64];
         char buf_lat[64], buf_lon[64], buf_elev[64];
 
-        snprintf(buf_loc, 64, "Local|%02d:%02d", current_dt->hour, current_dt->minute);
-        snprintf(buf_ut, 64, "UT|%02d:%02d", ut_date.hours, ut_date.minutes);
+        snprintf(buf_loc, 64, "Local|%04d-%02d-%02d %02d:%02d:%02d", current_dt->year, current_dt->month, current_dt->day, current_dt->hour, current_dt->minute, current_dt->second);
+        snprintf(buf_ut, 64, "UT|%04d-%02d-%02d %02d:%02d:%02d", ut_date.years, ut_date.months, ut_date.days, ut_date.hours, ut_date.minutes, (int)ut_date.seconds);
         snprintf(buf_lst, 64, "LST|%02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
+        snprintf(buf_mjd, 64, "MJD|%.5f", mjd);
 
         snprintf(buf_lat, 64, "Lat|%.4f", current_loc->lat);
         snprintf(buf_lon, 64, "Lon|%.4f", current_loc->lon);
         snprintf(buf_elev, 64, "Elev|%.0fm", current_loc->elevation);
 
-        const char *lines[] = {buf_loc, buf_ut, buf_lst, buf_lat, buf_lon, buf_elev};
-        draw_styled_text_box(cr, 10, 10, lines, 6, 0);
+        const char *lines[] = {buf_loc, buf_ut, buf_lst, buf_mjd, buf_lat, buf_lon, buf_elev};
+        draw_styled_text_box(cr, 10, 10, lines, 7, 0);
     }
 
     // Ephemeris Box
@@ -799,6 +879,11 @@ static double drag_target_dist = 0;
 static double drag_target_v_rot_sign = 1.0;
 
 static void on_drag_begin(GtkGestureDrag *gesture, double start_x, double start_y, gpointer user_data) {
+    if (use_horizon_projection) {
+        drag_start_pan_y = horizon_center_az; // Reuse variable for az
+        return;
+    }
+
     drag_start_pan_y = view_pan_y;
 
     GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
@@ -831,6 +916,50 @@ static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, dou
     double radius = (width < height ? width : height) / 2.0 - 10;
     double cx = width / 2.0;
     double cy = height / 2.0;
+
+    if (use_horizon_projection) {
+        // Horizon mode: Drag X changes Azimuth
+        // Scale: Full width corresponds to some FOV.
+        // Let's approximate: Radius corresponds to 90 degrees in Stereographic center?
+        // In Stereo at center: dx/d_angle = 0.5 (Scale factor k=0.5 at X=1?).
+        // Simple linear map for intuitiveness:
+        // offset_x pixels.
+        // 1 pixel = scale factor.
+        // Let's say drag width = 90 degrees.
+        double angle_scale = 90.0 / radius / view_zoom; // degrees per pixel
+
+        // We use relative drag, so we need to track delta since last update?
+        // GtkGestureDrag gives total offset from start.
+        // We need previous offset to calculate delta.
+        // Or store initial azimuth at drag start.
+
+        // Static variable to store start az? Or use user_data?
+        // Let's use a static for simplicity in this context, assuming single drag.
+        static double drag_start_az = -1;
+
+        // Hack: Check if this is the first update call?
+        // Better: Use drag_begin to store start az.
+        // But drag_begin doesn't know about horizon mode specifics in `drag_start_pan_y`.
+        // Let's assume `drag_start_pan_y` can be reused or we add a variable.
+        // reusing `drag_start_pan_y` as `drag_start_az` for horizon mode.
+
+        if (offset_x == 0 && offset_y == 0) { // Should be caught in drag_begin, but for safety
+             // This logic assumes on_drag_begin sets drag_start_pan_y = horizon_center_az;
+        }
+
+        double delta_az = offset_x * angle_scale;
+        horizon_center_az = drag_start_pan_y - delta_az; // Drag left (neg offset) -> Increase Az (Rotate camera left -> View right?)
+        // Standard: Drag sky. Drag left -> Sky moves left -> Center Az increases?
+        // If Center Az increases (South -> West), we look West. Sky moves Right.
+        // So Drag Left (-x) -> Sky moves Left -> Center Az Decreases.
+        // So minus sign is correct?
+
+        while (horizon_center_az < 0) horizon_center_az += 360.0;
+        while (horizon_center_az >= 360.0) horizon_center_az -= 360.0;
+
+        sky_view_redraw();
+        return;
+    }
 
     double start_x, start_y;
     gtk_gesture_drag_get_start_point(gesture, &start_x, &start_y);

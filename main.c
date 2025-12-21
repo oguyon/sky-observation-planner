@@ -695,6 +695,10 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(cb_colors, "toggled", G_CALLBACK(on_toggle_star_colors), NULL);
     gtk_box_append(GTK_BOX(toggle_box), cb_colors);
 
+    GtkWidget *btn_horizon = gtk_toggle_button_new_with_label("Horizon View");
+    g_signal_connect(btn_horizon, "toggled", G_CALLBACK(sky_view_toggle_projection), NULL);
+    gtk_box_append(GTK_BOX(toggle_box), btn_horizon);
+
     GtkWidget *btn_reset = gtk_button_new_with_label("Reset View");
     g_signal_connect(btn_reset, "clicked", G_CALLBACK(sky_view_reset_view), NULL);
     gtk_box_append(GTK_BOX(toggle_box), btn_reset);
