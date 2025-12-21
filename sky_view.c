@@ -582,7 +582,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         // Original JD for phase calculation (current time)
         double jd_now = get_julian_day(*current_dt);
 
-        struct ln_lnlat_posn observer = {current_loc->lat, current_loc->lon};
+        struct ln_lnlat_posn observer = {current_loc->lon, current_loc->lat};
         struct ln_rst_time rst;
 
         char buf_header[64];
@@ -600,49 +600,47 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         int ev_count = 0;
 
         // Solar
-        // libnova apparently returns the next set and rise events.
-        // We trust the values: if 'Set' is 06:00, it's Sunrise. If 'Rise' is 18:00, it's Sunset.
         ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
 
-        // Sunset (rst.rise)
-        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
+        // Sunset (rst.set)
+        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
         strcpy(events[ev_count].label, "Sunset");
-        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
+        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
         ev_count++;
 
-        // Sunrise (rst.set)
-        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
+        // Sunrise (rst.rise)
+        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
         strcpy(events[ev_count].label, "Sunrise");
-        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
+        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
         ev_count++;
 
         ln_get_solar_rst_horizon(jd_noon, &observer, -18.0, &rst);
 
-        // Astro Tw. Start (rst.set)
-        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
+        // Astro Tw. Start (rst.rise)
+        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
         strcpy(events[ev_count].label, "Astro Tw. Start");
-        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
+        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
         ev_count++;
 
-        // Astro Tw. End (rst.rise)
-        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
+        // Astro Tw. End (rst.set)
+        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
         strcpy(events[ev_count].label, "Astro Tw. End");
-        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
+        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
         ev_count++;
 
         // Lunar
         ln_get_lunar_rst(jd_noon, &observer, &rst);
 
-        // Moon Rise (rst.set)
-        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
+        // Moon Rise (rst.rise)
+        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
         strcpy(events[ev_count].label, "Moon Rise");
-        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
+        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
         ev_count++;
 
-        // Moon Set (rst.rise)
-        events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
+        // Moon Set (rst.set)
+        events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
         strcpy(events[ev_count].label, "Moon Set");
-        format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
+        format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
         ev_count++;
 
         qsort(events, ev_count, sizeof(EphemEvent), compare_ephem_events);
