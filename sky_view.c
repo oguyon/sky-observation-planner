@@ -585,6 +585,15 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         struct ln_lnlat_posn observer = {current_loc->lon, current_loc->lat};
         struct ln_rst_time rst;
 
+        // Elevation correction for horizon
+        double R = 6378140.0; // Earth Radius in meters
+        double h = current_loc->elevation;
+        double dip = 0.0;
+        if (h > 0) {
+            dip = acos(R / (R + h)) * (180.0 / M_PI);
+        }
+        double horizon = -0.833 - dip;
+
         char buf_header[64];
 
         // Timezone: 0 for UT, current_dt->timezone_offset for Local
@@ -600,7 +609,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         int ev_count = 0;
 
         // Solar
-        ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
+        ln_get_solar_rst_horizon(jd_noon, &observer, horizon, &rst);
 
         // Sunset (rst.set)
         events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
