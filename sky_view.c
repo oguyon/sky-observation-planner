@@ -347,11 +347,15 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     cairo_clip(cr);
 
     // Directions (N=180, S=0)
-    struct { char *label; double az; } dirs[] = {{"N", 180}, {"S", 0}, {"E", 270}, {"W", 90}};
+    struct { char *label; double az; } dirs[] = {
+        {"N", 180}, {"NE", 225}, {"E", 270}, {"SE", 315},
+        {"S", 0}, {"SW", 45}, {"W", 90}, {"NW", 135}
+    };
     cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-    for (int i=0; i<4; i++) {
+    for (int i=0; i<8; i++) {
         double u, v;
-        if (project(0, dirs[i].az + 180, &u, &v)) {
+        double draw_az = dirs[i].az + (use_horizon_projection ? 0 : 180);
+        if (project(0, draw_az, &u, &v)) {
             double tx, ty;
             transform_point(u, v, &tx, &ty);
             draw_text_centered(cr, cx + tx * radius, cy + ty * radius, dirs[i].label);
