@@ -534,12 +534,12 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         // We trust the values: if 'Set' is 06:00, it's Sunrise. If 'Rise' is 18:00, it's Sunset.
         // We swap them here to match user expectation and standard output.
         ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
-        format_rst_time(rst.set, tz, buf_sunset, 64, "Sunset");
-        format_rst_time(rst.rise, tz, buf_sunrise, 64, "Sunrise");
+        format_rst_time(rst.rise, tz, buf_sunset, 64, "Sunset");
+        format_rst_time(rst.set, tz, buf_sunrise, 64, "Sunrise");
 
         ln_get_solar_rst_horizon(jd_noon, &observer, -18.0, &rst);
-        format_rst_time(rst.rise, tz, buf_tw_start, 64, "Astro Tw. Start");
-        format_rst_time(rst.set, tz, buf_tw_end, 64, "Astro Tw. End");
+        format_rst_time(rst.set, tz, buf_tw_start, 64, "Astro Tw. Start");
+        format_rst_time(rst.rise, tz, buf_tw_end, 64, "Astro Tw. End");
 
         // Lunar (Moon Rise/Set might also be swapped if coordinate system is consistent)
         ln_get_lunar_rst(jd_noon, &observer, &rst);
