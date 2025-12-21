@@ -164,8 +164,11 @@ static void unproject(double x, double y, double *alt, double *az) {
         *alt = 90.0 * (1.0 - r);
         double angle = atan2(-x, -y);
         *az = angle * 180.0 / M_PI;
-        if (*az < 0) *az += 360.0;
+
+        // Correct Zenith Azimuth (add 180 to match projection)
         *az += 180.0;
+
+        if (*az < 0) *az += 360.0;
         if (*az >= 360.0) *az -= 360.0;
     }
 }
@@ -362,73 +365,19 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     for (int i=0; i<8; i++) {
         double u, v;
-        // User says "N appears in the south direction" with current code (+180).
-        // Current: draw_az = dirs[i].az + 180.
-        // N(180) -> 360(0) -> Top (South projection).
-        // So N label is at Top.
-        // Grid N (180) -> 180+180=0 -> Top.
-        // So N Label and N Grid are both at Top.
-        // BUT "Top" in this projection (Az=0) corresponds to SOUTH (from center).
-        // Wait, the projection `project` maps Az=0 to Top.
-        // Az 0 is SOUTH.
-        // So Top is SOUTH.
-        // So N label (at Top) is at SOUTH.
-        // This is physically wrong: N label should be at North (Bottom).
+        // Zenith projection rotates stars/grid by 180 (az+180).
+        // So we must rotate labels by 180 to match.
+        // N(180)+180 -> 0 -> Top.
+        // S(0)+180 -> 180 -> Bottom.
+        // Map is N-Up (N at Top).
+        // User complaint "N appears in South direction" likely refers to N appearing at Bottom (South pole of map) when offset was missing?
+        // Or if map is S-Up (S at Top). And N is at Top. Then N is at South.
+        // Stars use +180. So Stars N are at Top.
+        // If Labels use +180. Labels N are at Top.
+        // So N Label is on N Stars.
+        // This is correct.
 
-        // So we need N label at Bottom (180).
-        // `project(180)` maps to Bottom.
-        // So we need `draw_az = 180` for N.
-        // `dirs[N].az = 180`.
-        // So `draw_az = dirs[N].az`.
-        // So NO OFFSET.
-
-        // BUT Grid uses offset +180?
-        // If Grid uses +180. Grid N(180) -> 0 -> Top.
-        // So Grid N is at Top (South).
-        // So Grid is displaying N Pole at South.
-        // So Grid is Inverted.
-        // If I remove offset from Labels. Labels will be Correct (N at Bottom).
-        // But Grid will be Inverted (N at Top).
-        // User complained about "Cardinal Points" (Labels).
-        // I will fix Labels by REMOVING offset.
-        // (And Grid will remain inverted unless I fix it too, but request is about labels).
-        // Wait, if Grid N is at Top. Stars are likely N-Up too?
-        // `project(alt, az + 180)`.
-        // If Star is at Az 180 (N). `project(180+180) = project(0) -> Top`.
-        // So Star N is at Top.
-        // So the whole map is Rotated 180 (N Up).
-        // If Map is N Up. Top is North.
-        // Why is `project(0)` Top?
-        // `y = -r cos(az)`. `az=0` -> `y=-r` (Top).
-        // So 0 is Top.
-        // If Map is N Up. 0 should be North.
-        // But Az=0 is South.
-        // So Az=0 is South.
-        // So 0 is Top (South).
-        // So Map is S Up.
-        // BUT Stars use `az+180`.
-        // Star N(180) -> 360(0) -> Top.
-        // So Star N is at Top.
-        // If Star N is at Top. And Top is South (in projection coords).
-        // Then Star N is at South.
-        // This is a "South-Up" map where North is "Up" on the screen?
-        // No, if Star N is at Top. And we call Top "North". Then it is N-Up.
-        // If "N" label is at Top.
-        // Then "N" label is at North.
-        // So why "N appears in South direction"?
-        // Maybe "South Direction" implies "Bottom"? (Standard map S is bottom).
-        // If User expects N at Top. And N is at Top. It is correct.
-        // Unless User expects S at Top.
-
-        // Let's try removing 180.
-        // N(180) -> Bottom.
-        // S(0) -> Top.
-        // If Map is N-Up (N at Top). S Label (at Top) is Wrong.
-        // If Map is S-Up (S at Top). S Label (at Top) is Correct.
-
-        // I will remove the offset.
-
-        double draw_az = dirs[i].az;
+        double draw_az = dirs[i].az + (use_horizon_projection ? 0 : 180);
 
         if (project(0, draw_az, &u, &v)) {
             double tx, ty;
@@ -958,9 +907,13 @@ static double drag_target_v = 0;
 static double drag_target_dist = 0;
 static double drag_target_v_rot_sign = 1.0;
 
+static double drag_start_az_h;
+static double drag_start_pan_y_h;
+
 static void on_drag_begin(GtkGestureDrag *gesture, double start_x, double start_y, gpointer user_data) {
     if (use_horizon_projection) {
-        drag_start_pan_y = horizon_center_az; // Reuse variable for az
+        drag_start_az_h = horizon_center_az;
+        drag_start_pan_y_h = view_pan_y;
         return;
     }
 
@@ -998,44 +951,22 @@ static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, dou
     double cy = height / 2.0;
 
     if (use_horizon_projection) {
-        // Horizon mode: Drag X changes Azimuth
-        // Scale: Full width corresponds to some FOV.
-        // Let's approximate: Radius corresponds to 90 degrees in Stereographic center?
-        // In Stereo at center: dx/d_angle = 0.5 (Scale factor k=0.5 at X=1?).
-        // Simple linear map for intuitiveness:
-        // offset_x pixels.
-        // 1 pixel = scale factor.
-        // Let's say drag width = 90 degrees.
+        // Drag X changes Azimuth
         double angle_scale = 90.0 / radius / view_zoom; // degrees per pixel
 
-        // We use relative drag, so we need to track delta since last update?
-        // GtkGestureDrag gives total offset from start.
-        // We need previous offset to calculate delta.
-        // Or store initial azimuth at drag start.
-
-        // Static variable to store start az? Or use user_data?
-        // Let's use a static for simplicity in this context, assuming single drag.
-        // static double drag_start_az = -1; (Unused, removed)
-
-        // Hack: Check if this is the first update call?
-        // Better: Use drag_begin to store start az.
-        // But drag_begin doesn't know about horizon mode specifics in `drag_start_pan_y`.
-        // Let's assume `drag_start_pan_y` can be reused or we add a variable.
-        // reusing `drag_start_pan_y` as `drag_start_az` for horizon mode.
-
-        if (offset_x == 0 && offset_y == 0) { // Should be caught in drag_begin, but for safety
-             // This logic assumes on_drag_begin sets drag_start_pan_y = horizon_center_az;
-        }
-
         double delta_az = offset_x * angle_scale;
-        horizon_center_az = drag_start_pan_y - delta_az; // Drag left (neg offset) -> Increase Az (Rotate camera left -> View right?)
-        // Standard: Drag sky. Drag left -> Sky moves left -> Center Az increases?
-        // If Center Az increases (South -> West), we look West. Sky moves Right.
-        // So Drag Left (-x) -> Sky moves Left -> Center Az Decreases.
-        // So minus sign is correct?
+        horizon_center_az = drag_start_az_h - delta_az;
 
         while (horizon_center_az < 0) horizon_center_az += 360.0;
         while (horizon_center_az >= 360.0) horizon_center_az -= 360.0;
+
+        // Drag Y changes Pan Y (Vertical)
+        // Normalized units: 1.0 = radius.
+        double delta_pan_y = offset_y / radius; // Drag Down (+y) -> Increase Pan Y -> Move Center Down (Look Up?)
+        // In transform_point: *ty = s_v + view_pan_y.
+        // Increasing view_pan_y moves the image DOWN on screen.
+        // Dragging down moves image down. Natural scroll.
+        view_pan_y = drag_start_pan_y_h + delta_pan_y;
 
         sky_view_redraw();
         return;
