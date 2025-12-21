@@ -351,16 +351,25 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         {"N", 180}, {"NE", 225}, {"E", 270}, {"SE", 315},
         {"S", 0}, {"SW", 45}, {"W", 90}, {"NW", 135}
     };
-    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
+
+    // Brighter, Bolder, Bigger for directions
+    cairo_save(cr);
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    double dir_font_size = 15.0 * (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
+    cairo_set_font_size(cr, dir_font_size);
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+
     for (int i=0; i<8; i++) {
         double u, v;
-        double draw_az = dirs[i].az + (use_horizon_projection ? 0 : 180);
+        // Use raw azimuth to match star projection (South=0 at Top)
+        double draw_az = dirs[i].az;
         if (project(0, draw_az, &u, &v)) {
             double tx, ty;
             transform_point(u, v, &tx, &ty);
             draw_text_centered(cr, cx + tx * radius, cy + ty * radius, dirs[i].label);
         }
     }
+    cairo_restore(cr);
 
     // Grids
     if (current_options->show_alt_az_grid) {
