@@ -361,8 +361,166 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     for (int i=0; i<8; i++) {
         double u, v;
-        // Use raw azimuth to match star projection (South=0 at Top)
-        double draw_az = dirs[i].az;
+
+        // Correct Azimuth for projection
+        // Zenith projection is South-Up (Az=0 at Top). Az increases CW?
+        // Let's check 'project':
+        // x = -r sin(az), y = -r cos(az).
+        // Az=0 (S) -> x=0, y=-r (Top). Correct.
+        // Az=180 (N) -> x=0, y=r (Bottom).
+        // Az=90 (W) -> x=-r, y=0 (Left).
+        // Az=270 (E) -> x=r, y=0 (Right).
+
+        // So for Zenith view: S is Top, N is Bottom.
+        // If we want "N" label at the North position, we draw at Az=180.
+        // If user sees "N" at South position (Top), it means we drew N at Az=0.
+        // 'dirs' has N=180.
+        // draw_az = 180.
+        // project(0, 180) -> x=0, y=r (Bottom).
+        // So "N" should appear at Bottom.
+
+        // Wait, if N appears in South direction (Top?), then maybe my previous analysis of 'project' was wrong?
+        // Or maybe the coordinate system is flipped?
+        // Standard Map: N Up.
+        // Astrolabe/Planisphere: often N Up or S Up.
+        // If my project puts S at Top.
+        // And N label is at Bottom.
+        // Then N label is in North direction relative to map center?
+
+        // User says: "'N' appears in the south direction".
+        // South direction usually means the direction of the meridian passage (for N hemisphere).
+        // If screen Top is South. Then "N" appearing at Top would be wrong.
+
+        // Let's assume user wants Standard Map (N Up).
+        // But my projection is S Up.
+        // If I want N Up:
+        // project should map 180 to Top (y=-r).
+        // Current: 180 maps to Bottom (y=r).
+        // So Map is S Up.
+
+        // If User sees "N" at "South Direction".
+        // Does he mean "N" label is at the S pole of the map?
+        // If Map is S Up. S is Top.
+        // If "N" is at Top. That is wrong.
+        // "N" label (180) -> Bottom.
+        // "S" label (0) -> Top.
+
+        // Maybe I should offset by 180 ONLY if NOT horizon view?
+        // In previous step I removed offset.
+        // Before that, I had `dirs[i].az + 180`.
+        // 180 + 180 = 0 (S). So N label was drawn at S (Top).
+        // That was the "N in South direction" bug I presumably fixed?
+
+        // Let's try to rotate the labels by 180 degrees relative to current logic?
+        // If I use `dirs[i].az + 180`.
+        // N(180) -> 360(0) -> Top (South). Wrong.
+        // S(0) -> 180 -> Bottom (North). Wrong.
+
+        // If I use `dirs[i].az` (Current).
+        // N(180) -> Bottom.
+        // S(0) -> Top.
+        // This seems consistent with S-Up map.
+
+        // Is it possible "South Direction" means "Bottom of screen"?
+        // If user thinks Bottom is South.
+        // Then N is at South.
+        // But in S-Up map, Bottom is North.
+
+        // Let's assume user wants N to match the actual sky orientation presented.
+        // If `project` is correct.
+        // Let's check `project` again.
+        // `az_rad = az * PI / 180`.
+        // `x = -r sin(az)`, `y = -r cos(az)`.
+        // cos(0)=1 -> y=-r. (Top).
+        // sin(90)=1 -> x=-r. (Left).
+        // So Az=0 is Top. Az=90 is Left.
+        // West is Left?
+        // If looking Up (Zenith), N is behind (Bottom), S is forward (Top).
+        // West is to the Right?
+        // If I lie down head North, feet South. Looking up.
+        // East is Left. West is Right.
+        // My map: Az=90 (W) is Left.
+        // So W is Left.
+        // This is "looking down from outside" or "looking up with mirror"?
+        // Sky maps usually: E is Left, W is Right (when N is Up).
+        // If S is Up.
+        // Invert Left/Right?
+        // E (270) -> x=r (Right). W (90) -> x=-r (Left).
+        // Standard Sky Map (N Up): E Left, W Right.
+        // Rotated 180 (S Up): E Right, W Left.
+        // My map: E Right, W Left.
+        // So orientation is consistent with S Up.
+
+        // So labels: S should be Top. N Bottom. E Right. W Left.
+        // `dirs` has: S=0, N=180, E=270, W=90.
+        // With `draw_az = dirs[i].az`:
+        // S(0) -> Top.
+        // N(180) -> Bottom.
+        // E(270) -> Right.
+        // W(90) -> Left.
+
+        // This seems correct for S-Up.
+
+        // BUT user says "N appears in South Direction".
+        // If user considers "Top" to be North (standard map assumption).
+        // Then S(0) is at "North".
+        // But user says "N appears in South".
+        // So N label is at Top?
+        // That happens if `draw_az = 0`.
+        // `dirs[N].az = 180`.
+        // So I must have `180 + 180`.
+
+        // WAIT. My previous commit *removed* `+180`.
+        // "Removed the `+ 180` azimuth offset... fixing the 'N in South direction' issue."
+        // User says "The cardinal points *still* appear to be wrong".
+        // Maybe I misunderstood which direction was which?
+
+        // Let's stick to standard N-Up map for Zenith?
+        // If I change `view_rotation` to `PI` by default?
+        // `sky_view_reset_view`: `view_rotation = 0`.
+
+        // Let's allow rotating the labels to match whatever the user sees.
+        // If "N" is at Top. And Top is South.
+        // I need N to be at Bottom.
+        // If "N" is currently at Top.
+        // Then `project` mapped 180 to Top?
+        // No, `project` maps 0 to Top.
+        // So if N is at Top, I was passing 0 for N.
+        // `dirs[N].az = 180`.
+        // So I was passing `180 + 180 = 360 = 0`.
+        // BUT I removed the offset!
+        // So I am passing 180.
+        // So N should be at Bottom.
+
+        // Is `project` taking `az` or `az+180`?
+        // `project` takes `az`.
+
+        // Maybe the grid code adds 180?
+        // Grid: `project(alt, az + 180 + 180, ...)`? No.
+        // `project(alt, az + 180.0, &u, &v)` in `show_ra_dec_grid` loop?
+        // Grid: `project(alt, az + 180.0, ...)`
+        // So Grids are rotated by 180?
+        // If Grid N (180) is drawn at 180+180=0 (Top).
+        // Then the Map is N-Up?
+        // If Grid is N-Up.
+        // And I draw Labels S-Up.
+        // Then N label (Bottom) is on S Grid (Bottom).
+        // S label (Top) is on N Grid (Top).
+        // So S label is on North Pole?
+        // User says "N appears in South".
+        // Maybe user means "N label is on the South part of the Sky".
+
+        // Use `draw_az = dirs[i].az + (use_horizon_projection ? 0 : 180);`
+        // Restore the 180 offset for Zenith!
+        // Because the STAR/GRID projection seems to use `az + 180` internally in the loops?
+        // Let's check `sky_view.c` `on_draw` again.
+        // `get_horizontal_coordinates... &alt, &az`.
+        // `project(alt, az + 180.0, &u, &v)`.
+        // YES! The stars and grids are projected with `az + 180`.
+        // So I MUST add 180 to the labels too!
+
+        double draw_az = dirs[i].az + (use_horizon_projection ? 0 : 180);
+
         if (project(0, draw_az, &u, &v)) {
             double tx, ty;
             transform_point(u, v, &tx, &ty);
