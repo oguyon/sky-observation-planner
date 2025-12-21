@@ -165,9 +165,6 @@ static void unproject(double x, double y, double *alt, double *az) {
         double angle = atan2(-x, -y);
         *az = angle * 180.0 / M_PI;
 
-        // Correct Zenith Azimuth (add 180 to match projection)
-        *az += 180.0;
-
         if (*az < 0) *az += 360.0;
         if (*az >= 360.0) *az -= 360.0;
     }
@@ -349,43 +346,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     cairo_save(cr);
     cairo_clip(cr);
-
-    // Directions (N=180, S=0)
-    struct { char *label; double az; } dirs[] = {
-        {"N", 180}, {"NE", 225}, {"E", 270}, {"SE", 315},
-        {"S", 0}, {"SW", 45}, {"W", 90}, {"NW", 135}
-    };
-
-    // Brighter, Bolder, Bigger for directions
-    cairo_save(cr);
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-    double dir_font_size = 15.0 * (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
-    cairo_set_font_size(cr, dir_font_size);
-    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-
-    for (int i=0; i<8; i++) {
-        double u, v;
-        // Zenith projection rotates stars/grid by 180 (az+180).
-        // So we must rotate labels by 180 to match.
-        // N(180)+180 -> 0 -> Top.
-        // S(0)+180 -> 180 -> Bottom.
-        // Map is N-Up (N at Top).
-        // User complaint "N appears in South direction" likely refers to N appearing at Bottom (South pole of map) when offset was missing?
-        // Or if map is S-Up (S at Top). And N is at Top. Then N is at South.
-        // Stars use +180. So Stars N are at Top.
-        // If Labels use +180. Labels N are at Top.
-        // So N Label is on N Stars.
-        // This is correct.
-
-        double draw_az = dirs[i].az + (use_horizon_projection ? 0 : 180);
-
-        if (project(0, draw_az, &u, &v)) {
-            double tx, ty;
-            transform_point(u, v, &tx, &ty);
-            draw_text_centered(cr, cx + tx * radius, cy + ty * radius, dirs[i].label);
-        }
-    }
-    cairo_restore(cr);
 
     // Grids
     if (current_options->show_alt_az_grid) {
@@ -656,6 +616,42 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     cairo_restore(cr);
     cairo_set_source_rgb(cr, 0.2, 0.2, 0.2); cairo_arc(cr, h_cx, h_cy, h_r, 0, 2 * M_PI); cairo_stroke(cr);
+
+    // Directions (Moved to front layer to prevent clipping by horizon)
+    {
+        cairo_save(cr);
+        // Clip to drawing area? Or just draw?
+        // If we draw outside the circle in Zenith mode, it might look weird.
+        // But user asked to be "entirely visible" and not cropped by horizon.
+        // Horizon in Zenith mode is the circle edge.
+        // So we should NOT clip to the circle if we want them fully visible outside.
+        // But we should respect widget bounds.
+
+        // Directions (N=180, S=0)
+        struct { char *label; double az; } dirs[] = {
+            {"N", 180}, {"NE", 225}, {"E", 270}, {"SE", 315},
+            {"S", 0}, {"SW", 45}, {"W", 90}, {"NW", 135}
+        };
+
+        // Brighter, Bolder, Bigger for directions
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        double dir_font_size = 15.0 * (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
+        cairo_set_font_size(cr, dir_font_size);
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+
+        for (int i=0; i<8; i++) {
+            double u, v;
+            // Use raw azimuth to match star projection (South=0 at Top)
+            double draw_az = dirs[i].az;
+
+            if (project(0, draw_az, &u, &v)) {
+                double tx, ty;
+                transform_point(u, v, &tx, &ty);
+                draw_text_centered(cr, cx + tx * radius, cy + ty * radius, dirs[i].label);
+            }
+        }
+        cairo_restore(cr);
+    }
 
     // Info Boxes
     {
