@@ -34,6 +34,7 @@ typedef struct {
     double dec;
     double mag;
     double dist;
+    double bv; // Add B-V color index
 } Candidate;
 
 static Candidate *candidates = NULL;
@@ -49,6 +50,8 @@ typedef struct {
 } ROI;
 static ROI roi = {0, 0, 0, 0, 0};
 static double drag_start_x, drag_start_y;
+
+static int plot_mode = 0; // 0: Dist vs Mag, 1: Color vs Mag
 
 static double get_planet_mag(PlanetID p, double jd) {
     switch(p) {
@@ -95,6 +98,7 @@ static void update_candidate_list() {
             candidates[candidate_count].dec = stars[i].dec;
             candidates[candidate_count].mag = stars[i].mag;
             candidates[candidate_count].dist = dist;
+            candidates[candidate_count].bv = stars[i].bv;
             if (stars[i].id) {
                 snprintf(candidates[candidate_count].name, 64, "%s (Mag %.1f)", stars[i].id, stars[i].mag);
             } else {
@@ -117,6 +121,7 @@ static void update_candidate_list() {
             candidates[candidate_count].dec = p_equ.dec;
             candidates[candidate_count].mag = get_planet_mag(p_ids[p], jd);
             candidates[candidate_count].dist = dist;
+            candidates[candidate_count].bv = 0.0; // Default planet color?
             strcpy(candidates[candidate_count].name, p_names[p]);
             candidate_count++;
          }
@@ -131,6 +136,7 @@ static void update_candidate_list() {
         candidates[candidate_count].dec = sun_equ.dec;
         candidates[candidate_count].mag = -26.7;
         candidates[candidate_count].dist = sun_dist;
+        candidates[candidate_count].bv = 0.65; // Solar B-V
         strcpy(candidates[candidate_count].name, "Sun");
         candidate_count++;
     }
@@ -144,6 +150,7 @@ static void update_candidate_list() {
         candidates[candidate_count].dec = moon_equ.dec;
         candidates[candidate_count].mag = -12.0; // Approx
         candidates[candidate_count].dist = moon_dist;
+        candidates[candidate_count].bv = 0.0; // Neutral
         strcpy(candidates[candidate_count].name, "Moon");
         candidate_count++;
     }
@@ -158,8 +165,6 @@ static void update_plot_ranges(int width, int height) {
     p_min_mag = 100; p_max_mag = -100;
     int found = 0;
     for (int i=0; i<candidate_count; i++) {
-        // Only consider ROI? No, range normally fixed to all?
-        // Let's scale to all to keep context.
         if (candidates[i].mag < p_min_mag) p_min_mag = candidates[i].mag;
         if (candidates[i].mag > p_max_mag) p_max_mag = candidates[i].mag;
         found = 1;
@@ -175,24 +180,56 @@ static void update_plot_ranges(int width, int height) {
     p_gh = height - 2*p_pad;
 }
 
-static void map_point(double dist, double mag, double *x, double *y) {
-    *x = p_pad + (dist / search_fov) * p_gw;
+static void map_point(double val_x, double mag, double *x, double *y) {
+    // Mode 0: X = Dist. Range: 0 to search_fov.
+    // Mode 1: X = Color (B-V). Range: -0.5 to 2.5 (Fixed reasonable range for B-V).
+
+    if (plot_mode == 0) {
+        *x = p_pad + (val_x / search_fov) * p_gw;
+    } else {
+        double min_bv = -0.5;
+        double max_bv = 2.5;
+        *x = p_pad + ((val_x - min_bv) / (max_bv - min_bv)) * p_gw;
+    }
+
     // Y: Bright (Min Mag) at Top (p_pad), Dim (Max Mag) at Bottom (height - p_pad)
     *y = p_pad + ((mag - p_min_mag) / (p_max_mag - p_min_mag)) * p_gh;
 }
 
-static void unmap_point(double x, double y, double *dist, double *mag) {
-    *dist = ((x - p_pad) / p_gw) * search_fov;
+static void unmap_point(double x, double y, double *val_x, double *mag) {
+    if (plot_mode == 0) {
+        *val_x = ((x - p_pad) / p_gw) * search_fov;
+    } else {
+        double min_bv = -0.5;
+        double max_bv = 2.5;
+        *val_x = min_bv + ((x - p_pad) / p_gw) * (max_bv - min_bv);
+    }
+
     *mag = p_min_mag + ((y - p_pad) / p_gh) * (p_max_mag - p_min_mag);
 }
 
-static int is_in_roi(double dist, double mag) {
+static int is_in_roi(double val_x, double mag) {
     if (!roi.active) return 1;
-    return (dist >= roi.min_x && dist <= roi.max_x && mag >= roi.min_y && mag <= roi.max_y);
-    // Wait, ROI is in Plot Coordinates or Data Coordinates?
-    // User said "allow user to draw a ROI in the 2D plot".
-    // Usually ROI logic maps data to pixels.
-    // Let's store ROI in Data Units (Dist, Mag).
+    // ROI stores data coords. We assume ROI coords match current mode.
+    // When switching mode, we should clear ROI.
+    return (val_x >= roi.min_x && val_x <= roi.max_x && mag >= roi.min_y && mag <= roi.max_y);
+}
+
+// B-V to RGB (Replicated from sky_view.c)
+static void plot_bv_to_rgb(double bv, double *r, double *g, double *b) {
+    if (bv < 0.0) { *r = 0.6; *g = 0.6; *b = 1.0; } // Blue
+    else if (bv < 0.5) {
+        double t = bv / 0.5;
+        *r = 0.6 + 0.4*t; *g = 0.6 + 0.4*t; *b = 1.0;
+    } else if (bv < 1.0) {
+        double t = (bv - 0.5) / 0.5;
+        *r = 1.0; *g = 1.0; *b = 1.0 - 0.5*t;
+    } else if (bv < 1.5) {
+        double t = (bv - 1.0) / 0.5;
+        *r = 1.0; *g = 1.0 - 0.4*t; *b = 0.5 - 0.5*t;
+    } else {
+        *r = 1.0; *g = 0.6; *b = 0.0; // Red
+    }
 }
 
 // Forward decl
@@ -215,7 +252,8 @@ static void on_plot_draw(GtkDrawingArea *area, cairo_t *cr, int width, int heigh
 
     // Labels
     cairo_move_to(cr, width/2 - 20, height - 5);
-    cairo_show_text(cr, "Dist (deg)");
+    if (plot_mode == 0) cairo_show_text(cr, "Dist (deg)");
+    else cairo_show_text(cr, "Color (B-V)");
 
     cairo_save(cr);
     cairo_rotate(cr, -M_PI/2);
@@ -223,15 +261,18 @@ static void on_plot_draw(GtkDrawingArea *area, cairo_t *cr, int width, int heigh
     cairo_show_text(cr, "Magnitude");
     cairo_restore(cr);
 
-    // Ticks X (Dist)
+    // Ticks X
     for (int i=0; i<=5; i++) {
-        double d = (i / 5.0) * search_fov;
+        double val;
+        if (plot_mode == 0) val = (i / 5.0) * search_fov;
+        else val = -0.5 + (i / 5.0) * 3.0; // -0.5 to 2.5
+
         double x, y_dummy;
-        map_point(d, p_min_mag, &x, &y_dummy);
+        map_point(val, p_min_mag, &x, &y_dummy);
         cairo_move_to(cr, x, height - p_pad);
         cairo_line_to(cr, x, height - p_pad + 5);
         cairo_stroke(cr);
-        char buf[16]; snprintf(buf, 16, "%.1f", d);
+        char buf[16]; snprintf(buf, 16, "%.1f", val);
         cairo_text_extents_t ext; cairo_text_extents(cr, buf, &ext);
         cairo_move_to(cr, x - ext.width/2, height - p_pad + 15);
         cairo_show_text(cr, buf);
@@ -241,7 +282,7 @@ static void on_plot_draw(GtkDrawingArea *area, cairo_t *cr, int width, int heigh
     for (int i=0; i<=5; i++) {
         double m = p_min_mag + (i/5.0) * (p_max_mag - p_min_mag);
         double x_dummy, y;
-        map_point(0, m, &x_dummy, &y);
+        map_point(0, m, &x_dummy, &y); // x value irrelevant for Y mapping
         cairo_move_to(cr, p_pad, y);
         cairo_line_to(cr, p_pad - 5, y);
         cairo_stroke(cr);
@@ -253,24 +294,31 @@ static void on_plot_draw(GtkDrawingArea *area, cairo_t *cr, int width, int heigh
 
     // Points
     for (int i=0; i<candidate_count; i++) {
-        int in_r = is_in_roi(candidates[i].dist, candidates[i].mag);
-
-        // Skip drawing if strictly ROI filtering?
-        // User: "have the list only show the candidates inside the ROI".
-        // Plot usually shows all but highlights? Or fades?
-        // Let's fade out non-ROI points.
+        double val_x = (plot_mode == 0) ? candidates[i].dist : candidates[i].bv;
+        int in_r = is_in_roi(val_x, candidates[i].mag);
 
         double x, y;
-        map_point(candidates[i].dist, candidates[i].mag, &x, &y);
+        map_point(val_x, candidates[i].mag, &x, &y);
+
+        double r, g, b;
+        plot_bv_to_rgb(candidates[i].bv, &r, &g, &b);
 
         if (roi.active && !in_r) {
-            cairo_set_source_rgba(cr, 0.8, 0.8, 0.8, 0.5); // Greyed out
+            cairo_set_source_rgba(cr, r, g, b, 0.2); // Greyed/Dimmed color
         } else {
-            cairo_set_source_rgb(cr, 0, 0, 0);
+            cairo_set_source_rgb(cr, r, g, b);
         }
 
         cairo_arc(cr, x, y, 3, 0, 2*M_PI);
         cairo_fill(cr);
+
+        // Stroke black to make it visible on white bg? Or just fill?
+        // Bright stars on white might be hard to see (e.g. yellow).
+        // Let's add a thin black outline.
+        cairo_set_line_width(cr, 0.5);
+        cairo_set_source_rgba(cr, 0, 0, 0, (roi.active && !in_r) ? 0.2 : 1.0);
+        cairo_arc(cr, x, y, 3, 0, 2*M_PI);
+        cairo_stroke(cr);
 
         // Selected Circle
         if (i == selected_candidate_index) {
@@ -287,7 +335,7 @@ static void on_plot_draw(GtkDrawingArea *area, cairo_t *cr, int width, int heigh
         map_point(roi.min_x, roi.min_y, &x1, &y1);
         map_point(roi.max_x, roi.max_y, &x2, &y2);
 
-        cairo_set_source_rgba(cr, 0, 0, 1, 0.2);
+        cairo_set_source_rgba(cr, 0, 0, 1, 0.1);
         cairo_rectangle(cr, x1, y1, x2-x1, y2-y1);
         cairo_fill(cr);
         cairo_set_source_rgb(cr, 0, 0, 1);
@@ -319,33 +367,18 @@ static void on_plot_click(GtkGestureClick *gesture, int n_press, double x, doubl
         selected_candidate_index = best_idx;
         gtk_widget_queue_draw(plot_area);
 
-        // Select in list (Need to map candidate index to List Row Index)
-        // If ROI is active, list subset might differ.
-        // Assuming populated list matches filtered order?
-        // Let's iterate list model to find item?
-        // Easier: rebuild list is cheap enough? Or just assume list contains only valid items.
-        // I need to map "Candidate Index" to "List Index".
-
-        // Re-scanning list model
         if (source_list_model) {
-            // Find logic ...
-            // Or simpler: Just set global selection and refresh list highlight?
-            // GTK Selection Model needs position.
-            // Let's trigger a list refresh/reselect?
-            // Let's implement mapping.
-
             // Iterate candidates, count how many valid before `best_idx`.
             int list_idx = 0;
             for (int i=0; i<best_idx; i++) {
-                if (!roi.active || is_in_roi(candidates[i].dist, candidates[i].mag)) {
+                double val_x = (plot_mode == 0) ? candidates[i].dist : candidates[i].bv;
+                if (!roi.active || is_in_roi(val_x, candidates[i].mag)) {
                     list_idx++;
                 }
             }
 
             GtkSelectionModel *sel_model = gtk_column_view_get_model(list_view);
             gtk_selection_model_select_item(sel_model, list_idx, TRUE);
-            // Scroll to item?
-            // gtk_column_view_scroll_to? (GTK 4.12+).
         }
     }
 }
@@ -354,6 +387,7 @@ static void on_plot_drag_begin(GtkGestureDrag *gesture, double x, double y, gpoi
     drag_start_x = x;
     drag_start_y = y;
     roi.active = 0; // Clear old ROI on new drag? Or add modifier? Let's clear.
+    populate_list(); // Update list to show all
     gtk_widget_queue_draw(plot_area);
 }
 
@@ -381,8 +415,6 @@ static void on_plot_drag_end(GtkGestureDrag *gesture, double offset_x, double of
 
 static void on_list_selection_changed(GtkSelectionModel *model, guint position, guint n_items, gpointer user_data) {
     // Find which candidate corresponds to list index `position` (if selected)
-    // `position` might be unselected? No, `selection-changed` signal is generic.
-    // Use `get_selected`.
     GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
     guint selected = gtk_single_selection_get_selected(sel);
 
@@ -392,7 +424,8 @@ static void on_list_selection_changed(GtkSelectionModel *model, guint position, 
         // Map List Index -> Candidate Index
         int current_list_idx = 0;
         for (int i=0; i<candidate_count; i++) {
-            if (!roi.active || is_in_roi(candidates[i].dist, candidates[i].mag)) {
+            double val_x = (plot_mode == 0) ? candidates[i].dist : candidates[i].bv;
+            if (!roi.active || is_in_roi(val_x, candidates[i].mag)) {
                 if (current_list_idx == selected) {
                     selected_candidate_index = i;
                     break;
@@ -421,15 +454,21 @@ static void populate_list() {
     // Count valid
     int valid_count = 0;
     for (int i=0; i<candidate_count; i++) {
-        if (!roi.active || is_in_roi(candidates[i].dist, candidates[i].mag)) valid_count++;
+        double val_x = (plot_mode == 0) ? candidates[i].dist : candidates[i].bv;
+        if (!roi.active || is_in_roi(val_x, candidates[i].mag)) valid_count++;
     }
 
     const char **items = malloc(sizeof(char*) * (valid_count + 1));
     int idx = 0;
     for (int i=0; i<candidate_count; i++) {
-        if (!roi.active || is_in_roi(candidates[i].dist, candidates[i].mag)) {
+        double val_x = (plot_mode == 0) ? candidates[i].dist : candidates[i].bv;
+        if (!roi.active || is_in_roi(val_x, candidates[i].mag)) {
             char *buf = malloc(128);
-            snprintf(buf, 128, "%s | M:%.1f | D:%.2f", candidates[i].name, candidates[i].mag, candidates[i].dist);
+            if (plot_mode == 0) {
+                snprintf(buf, 128, "%s | M:%.1f | D:%.2f", candidates[i].name, candidates[i].mag, candidates[i].dist);
+            } else {
+                snprintf(buf, 128, "%s | M:%.1f | BV:%.2f", candidates[i].name, candidates[i].mag, candidates[i].bv);
+            }
             items[idx++] = buf;
         }
     }
@@ -457,6 +496,16 @@ static void on_clear_roi_clicked(GtkButton *btn, gpointer user_data) {
     roi.active = 0;
     populate_list();
     gtk_widget_queue_draw(plot_area);
+}
+
+static void on_plot_mode_toggled(GtkCheckButton *btn, gpointer user_data) {
+    int new_mode = gtk_check_button_get_active(btn) ? 1 : 0;
+    if (new_mode != plot_mode) {
+        plot_mode = new_mode;
+        roi.active = 0; // Clear ROI on mode switch
+        populate_list();
+        gtk_widget_queue_draw(plot_area);
+    }
 }
 
 static TargetList *dlg_target_list;
@@ -515,6 +564,11 @@ void show_source_selection_dialog(GtkWindow *parent, double ra, double dec, Loca
     GtkWidget *btn_clear_roi = gtk_button_new_with_label("Clear ROI");
     g_signal_connect(btn_clear_roi, "clicked", G_CALLBACK(on_clear_roi_clicked), NULL);
     gtk_box_append(GTK_BOX(hbox), btn_clear_roi);
+
+    GtkWidget *cb_plot_mode = gtk_check_button_new_with_label("Color vs Mag");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_plot_mode), plot_mode);
+    g_signal_connect(cb_plot_mode, "toggled", G_CALLBACK(on_plot_mode_toggled), NULL);
+    gtk_box_append(GTK_BOX(hbox), cb_plot_mode);
 
     // Paned
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
