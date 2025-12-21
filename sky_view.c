@@ -1,256 +1,790 @@
 #include "sky_view.h"
+#include "catalog.h"
+#include "target_list.h"
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <libnova/julian_day.h>
+#include <libnova/rise_set.h>
+#include <libnova/solar.h>
+#include <libnova/lunar.h>
+#include <libnova/angular_separation.h>
 
-static AppState *app_state;
-static SelectionChangedCallback on_selection_changed = NULL;
-static void *selection_changed_data = NULL;
+static Location *current_loc;
+static DateTime *current_dt;
+static SkyViewOptions *current_options;
+static GtkWidget *drawing_area;
+static void (*click_callback)(double, double) = NULL;
+static double cursor_alt = -1;
+static double cursor_az = -1;
 
-// Coordinate transformation: Horizontal (Alt, Az) to Screen (x, y)
-// Center (cx, cy), Radius R
-// North Up (Az=180 -> Up), East Left (Az=270 -> Left)
-// Azimuth in degrees: 0 South, 90 West, 180 North, 270 East
-// Screen X: -R..R, Y: -R..R
-static void hrz_to_screen(double alt, double az, double R, double *x, double *y) {
-    if (alt < 0) {
-        *x = -9999; *y = -9999; // Off screen
+// View State
+static double view_zoom = 1.0;
+static double view_pan_x = 0.0; // Normalized units
+static double view_pan_y = 0.0; // Normalized units
+static double view_rotation = 0.0; // Radians
+static Target *highlighted_target = NULL;
+
+void sky_view_set_highlighted_target(Target *target) {
+    highlighted_target = target;
+    sky_view_redraw();
+}
+
+void sky_view_reset_view() {
+    view_zoom = 1.0;
+    view_pan_x = 0.0;
+    view_pan_y = 0.0;
+    view_rotation = 0.0;
+    sky_view_redraw();
+}
+
+double sky_view_get_zoom() {
+    return view_zoom;
+}
+
+// Helper to project Alt/Az to X/Y (0-1 range from center)
+// North Up, South Down. West Left, East Right.
+// Az 0=South, 180=North.
+static int project(double alt, double az, double *x, double *y) {
+    if (alt < 0) return 0;
+    double r = 1.0 - alt / 90.0;
+    if (r < 0) r = 0;
+    double az_rad = az * M_PI / 180.0;
+    *x = -r * sin(az_rad);
+    *y = -r * cos(az_rad);
+    return 1;
+}
+
+// Apply View Transformation (Rotate -> Scale -> Pan)
+static void transform_point(double u, double v, double *tx, double *ty) {
+    double u_rot = u * cos(view_rotation) - v * sin(view_rotation);
+    double v_rot = u * sin(view_rotation) + v * cos(view_rotation);
+
+    double s_u = u_rot * view_zoom;
+    double s_v = v_rot * view_zoom;
+    *tx = s_u + view_pan_x;
+    *ty = s_v + view_pan_y;
+}
+
+static void untransform_point(double tx, double ty, double *u, double *v) {
+    double s_u = tx - view_pan_x;
+    double s_v = ty - view_pan_y;
+    double u_rot = s_u / view_zoom;
+    double v_rot = s_v / view_zoom;
+
+    *u = u_rot * cos(-view_rotation) - v_rot * sin(-view_rotation);
+    *v = u_rot * sin(-view_rotation) + v_rot * cos(-view_rotation);
+}
+
+static void unproject(double x, double y, double *alt, double *az) {
+    double r = sqrt(x*x + y*y);
+    if (r > 1.0) {
+        *alt = -1; // Invalid
         return;
     }
-    double r = R * (90.0 - alt) / 90.0;
-    // Az=180 (North) -> Up (y negative). theta = -90 deg.
-    // Az=270 (East) -> Left (x negative). theta = 180 deg.
-    // theta = Az - 270?
-    // 180 - 270 = -90. Correct.
-    // 270 - 270 = 0 (Right). Incorrect. East should be Left.
-    // Wait. North Up, East Left.
-    // North (180) -> Up (0, -1)
-    // East (270) -> Left (-1, 0)
-    // South (0) -> Down (0, 1)
-    // West (90) -> Right (1, 0)
-
-    // Angle from positive X axis (Right):
-    // Up: -90 deg (or 270)
-    // Left: 180 deg
-    // Down: 90 deg
-    // Right: 0 deg
-
-    // Mapping:
-    // Az 180 -> -90
-    // Az 270 -> 180
-    // Az 0 -> 90
-    // Az 90 -> 0
-
-    // Linear?
-    // 180 -> -90
-    // 90 -> 0
-    // Delta Az = -90 -> Delta Screen = 90. Slope = -1.
-    // ScreenAngle = C - Az
-    // 0 = C - 90 -> C = 90.
-    // Check:
-    // 180 -> 90 - 180 = -90. Correct.
-    // 270 -> 90 - 270 = -180 (same as 180). Correct.
-    // 0 -> 90 - 0 = 90. Correct.
-
-    // So theta_rad = (90 - Az) * PI / 180.
-    double theta = (90.0 - az) * M_PI / 180.0;
-
-    *x = r * cos(theta);
-    *y = r * sin(theta); // y grows down in GTK
+    *alt = 90.0 * (1.0 - r);
+    double angle = atan2(-x, -y);
+    *az = angle * 180.0 / M_PI;
+    if (*az < 0) *az += 360.0;
+    *az += 180.0;
+    if (*az >= 360.0) *az -= 360.0;
 }
 
-static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
-    AppState *app = (AppState *)data;
-    GtkAllocation allocation;
-    gtk_widget_get_allocation(widget, &allocation);
+static void draw_text_centered(cairo_t *cr, double x, double y, const char *text) {
+    cairo_text_extents_t extents;
+    cairo_text_extents(cr, text, &extents);
+    cairo_move_to(cr, x - extents.width/2 - extents.x_bearing, y - extents.height/2 - extents.y_bearing);
+    cairo_show_text(cr, text);
+}
 
-    double w = allocation.width;
-    double h = allocation.height;
-    double cx = w / 2.0;
-    double cy = h / 2.0;
-    double R = (w < h ? w : h) / 2.0 - 10; // Margin
+// Helper to draw a styled text box (opaque black, white outline)
+static void draw_styled_text_box(cairo_t *cr, double x, double y, const char **lines, int count, int right_align) {
+    if (count <= 0) return;
 
-    // Draw Background (Sky)
-    cairo_set_source_rgb(cr, 0.0, 0.0, 0.2); // Dark Blue
-    cairo_arc(cr, cx, cy, R, 0, 2 * M_PI);
-    cairo_fill(cr);
+    double font_size = 12.0 * (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
+    cairo_set_font_size(cr, font_size);
 
-    // Draw Horizon
-    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-    cairo_set_line_width(cr, 2);
-    cairo_arc(cr, cx, cy, R, 0, 2 * M_PI);
+    double max_w = 0;
+    double total_h = 0;
+    double line_h = font_size * 1.2;
+    double padding = 5.0;
+
+    for(int i=0; i<count; i++) {
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, lines[i], &ext);
+        if (ext.width > max_w) max_w = ext.width;
+    }
+    total_h = count * line_h;
+
+    double box_w = max_w + 2 * padding;
+    double box_h = total_h + 2 * padding;
+
+    double draw_x = right_align ? (x - box_w) : x;
+    double draw_y = y;
+
+    // Fill Black
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_rectangle(cr, draw_x, draw_y, box_w, box_h);
+    cairo_fill_preserve(cr);
+
+    // Stroke White
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_set_line_width(cr, 1.0);
     cairo_stroke(cr);
 
-    // Cardinal Points
-    cairo_set_source_rgb(cr, 0.8, 0.8, 0.8);
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-    cairo_set_font_size(cr, 12);
-
-    cairo_move_to(cr, cx - 5, cy - R + 15); cairo_show_text(cr, "N");
-    cairo_move_to(cr, cx - 5, cy + R - 5); cairo_show_text(cr, "S");
-    cairo_move_to(cr, cx + R - 15, cy + 5); cairo_show_text(cr, "W");
-    cairo_move_to(cr, cx - R + 5, cy + 5); cairo_show_text(cr, "E");
-
-    // Calculate Star Positions
-    struct ln_hrz_posn *star_pos = malloc(sizeof(struct ln_hrz_posn) * app->num_stars);
-    double JD = ln_get_julian_day(&app->date);
-
-    for (int i = 0; i < app->num_stars; i++) {
-        ln_get_hrz_from_equ(&app->stars[i].pos, &app->observer_location, JD, &star_pos[i]);
+    // Draw Text
+    for(int i=0; i<count; i++) {
+        cairo_move_to(cr, draw_x + padding, draw_y + padding + (i + 1) * line_h - (line_h - font_size)/2);
+        cairo_show_text(cr, lines[i]);
     }
-
-    // Draw Constellations
-    if (app->show_constellations) {
-        cairo_set_source_rgb(cr, 0.4, 0.6, 0.8);
-        cairo_set_line_width(cr, 1);
-        for (int i = 0; i < app->num_constellations; i++) {
-            int *idx = app->constellations[i].star_indices;
-            while (*idx != -1) {
-                int i1 = *idx;
-                int i2 = *(idx+1);
-                idx += 2;
-
-                if (star_pos[i1].alt > 0 && star_pos[i2].alt > 0) {
-                    double x1, y1, x2, y2;
-                    hrz_to_screen(star_pos[i1].alt, star_pos[i1].az, R, &x1, &y1);
-                    hrz_to_screen(star_pos[i2].alt, star_pos[i2].az, R, &x2, &y2);
-
-                    cairo_move_to(cr, cx + x1, cy + y1);
-                    cairo_line_to(cr, cx + x2, cy + y2);
-                    cairo_stroke(cr);
-                }
-            }
-        }
-    }
-
-    // Draw Stars
-    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-    for (int i = 0; i < app->num_stars; i++) {
-        if (star_pos[i].alt > 0) {
-            double x, y;
-            hrz_to_screen(star_pos[i].alt, star_pos[i].az, R, &x, &y);
-
-            // Size based on magnitude (roughly)
-            // Mag -1.5 (Sirius) -> Large. Mag 6 -> Small.
-            // Size = 3 - 0.5 * Mag?
-            // Sirius: 3 - (-0.7) = 3.7
-            // Mag 2: 3 - 1 = 2
-            double size = 3.0 - 0.5 * app->stars[i].mag;
-            if (size < 1) size = 1;
-
-            cairo_arc(cr, cx + x, cy + y, size, 0, 2 * M_PI);
-            cairo_fill(cr);
-
-            // Check if selected
-            // (Simple check by name if needed, or if coordinate matches selection)
-             if (app->has_selection && strcmp(app->selection_name, app->stars[i].name) == 0) {
-                cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
-                cairo_arc(cr, cx + x, cy + y, size + 2, 0, 2 * M_PI);
-                cairo_stroke(cr);
-                cairo_set_source_rgb(cr, 1.0, 1.0, 1.0); // Reset
-            }
-        }
-    }
-
-    free(star_pos);
-    return FALSE;
 }
 
-static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data) {
-    AppState *app = (AppState *)data;
-    GtkAllocation allocation;
-    gtk_widget_get_allocation(widget, &allocation);
-
-    double w = allocation.width;
-    double h = allocation.height;
-    double cx = w / 2.0;
-    double cy = h / 2.0;
-    double R = (w < h ? w : h) / 2.0 - 10;
-
-    double mx = event->x - cx;
-    double my = event->y - cy;
-    double r_click = sqrt(mx*mx + my*my);
-
-    if (r_click > R) return FALSE; // Clicked outside
-
-    // Inverse Transform
-    // r = R * (90 - Alt) / 90 -> Alt = 90 - 90 * r / R
-    double alt = 90.0 - 90.0 * r_click / R;
-
-    // x = r cos(theta), y = r sin(theta) -> theta = atan2(y, x)
-    double theta = atan2(my, mx); // Radians
-    // theta_deg = (90 - Az) -> Az = 90 - theta_deg
-    double theta_deg = theta * 180.0 / M_PI;
-    double az = 90.0 - theta_deg;
-    if (az < 0) az += 360.0;
-    if (az >= 360) az -= 360.0;
-
-    // Find closest star?
-    // For now, let's just set the selection to this coordinate (approx)
-    // We need to convert back to RA/Dec
-    struct ln_hrz_posn hrz = {az, alt};
-    struct ln_equ_posn equ;
-    double JD = ln_get_julian_day(&app->date);
-
-    ln_get_equ_from_hrz(&hrz, &app->observer_location, JD, &equ);
-
-    app->has_selection = true;
-    app->selection_equ = equ;
-
-    // Check if we clicked near a star
-    // Simple closest star search
-    double min_dist = 2.0; // degrees (approx click tolerance)
-    int closest = -1;
-
-    // Recompute star positions to match click
-    // Optimization: we could store last computed positions in AppState or widget
-    for (int i = 0; i < app->num_stars; i++) {
-        struct ln_hrz_posn pos;
-        ln_get_hrz_from_equ(&app->stars[i].pos, &app->observer_location, JD, &pos);
-        if (pos.alt > 0) {
-            double d_alt = pos.alt - alt;
-            double d_az = pos.az - az; // This is rough on sphere, but okay for click
-            // Handle Az wrap around 0/360
-            if (d_az > 180) d_az -= 360;
-            if (d_az < -180) d_az += 360;
-
-            double dist = sqrt(d_alt*d_alt + d_az*d_az); // Rough
-            if (dist < min_dist) {
-                min_dist = dist;
-                closest = i;
-            }
-        }
-    }
-
-    if (closest != -1) {
-        strcpy(app->selection_name, app->stars[closest].name);
-        app->selection_equ = app->stars[closest].pos; // Snap to star
+// Simple B-V to RGB mapping
+static void bv_to_rgb(double bv, double *r, double *g, double *b) {
+    if (bv < 0.0) { *r = 0.6; *g = 0.6; *b = 1.0; } // Blue
+    else if (bv < 0.5) {
+        double t = bv / 0.5;
+        *r = 0.6 + 0.4*t; *g = 0.6 + 0.4*t; *b = 1.0;
+    } else if (bv < 1.0) {
+        double t = (bv - 0.5) / 0.5;
+        *r = 1.0; *g = 1.0; *b = 1.0 - 0.5*t;
+    } else if (bv < 1.5) {
+        double t = (bv - 1.0) / 0.5;
+        *r = 1.0; *g = 1.0 - 0.4*t; *b = 0.5 - 0.5*t;
     } else {
-        sprintf(app->selection_name, "Sky Point");
+        *r = 1.0; *g = 0.6; *b = 0.0; // Red
     }
-
-    gtk_widget_queue_draw(widget);
-
-    if (on_selection_changed) {
-        on_selection_changed(selection_changed_data);
-    }
-
-    return TRUE;
 }
 
-GtkWidget *sky_view_new(AppState *app, SelectionChangedCallback callback, void *callback_data) {
-    app_state = app;
-    on_selection_changed = callback;
-    selection_changed_data = callback_data;
+static void format_rst_time(double jd, double timezone, char *buf, size_t len, const char *label) {
+    if (jd < 0) {
+        snprintf(buf, len, "%s: --:--", label);
+    } else {
+        struct ln_date date;
+        ln_get_date(jd, &date);
+        double h = date.hours + date.minutes/60.0 + date.seconds/3600.0 + timezone;
+        while (h < 0) h += 24.0;
+        while (h >= 24.0) h -= 24.0;
+        int hh = (int)h;
+        int mm = (int)((h - hh) * 60.0);
+        snprintf(buf, len, "%s: %02d:%02d", label, hh, mm);
+    }
+}
 
-    GtkWidget *drawing_area = gtk_drawing_area_new();
+static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data) {
+    double radius = (width < height ? width : height) / 2.0 - 10;
+    double cx = width / 2.0;
+    double cy = height / 2.0;
+
+    double effective_limit = current_options->star_mag_limit;
+    double effective_m0 = current_options->star_size_m0;
+    double effective_ma = current_options->star_size_ma;
+
+    if (current_options->auto_star_settings) {
+        effective_limit = 8.0 + view_zoom;
+        effective_m0 = 5.5 + 0.3 * sqrt(view_zoom);
+        effective_ma = 0.35 + 0.05 * sqrt(view_zoom);
+    }
+
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_paint(cr);
+
+    double h_cx = cx + view_pan_x * radius;
+    double h_cy = cy + view_pan_y * radius;
+    double h_r = radius * view_zoom;
+
+    cairo_set_source_rgb(cr, 0, 0, 0.1);
+    cairo_arc(cr, h_cx, h_cy, h_r, 0, 2 * M_PI);
+    cairo_fill_preserve(cr);
+
+    cairo_save(cr);
+    cairo_clip(cr);
+
+    // Directions (N=180, S=0)
+    struct { char *label; double az; } dirs[] = {{"N", 180}, {"S", 0}, {"E", 270}, {"W", 90}};
+    cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
+    for (int i=0; i<4; i++) {
+        double u, v;
+        if (project(0, dirs[i].az + 180, &u, &v)) {
+            double tx, ty;
+            transform_point(u, v, &tx, &ty);
+            draw_text_centered(cr, cx + tx * radius, cy + ty * radius, dirs[i].label);
+        }
+    }
+
+    // Grids
+    if (current_options->show_alt_az_grid) {
+        cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.8);
+        cairo_set_line_width(cr, 1.0);
+        for (int alt = 30; alt < 90; alt += 30) {
+            double r_alt = 1.0 - alt / 90.0;
+            double t_r = r_alt * radius * view_zoom;
+            cairo_new_path(cr);
+            cairo_arc(cr, h_cx, h_cy, t_r, 0, 2 * M_PI);
+            cairo_stroke(cr);
+            char buf[10]; sprintf(buf, "%d", alt);
+            double u, v; project(alt, 180 + 180, &u, &v);
+            double tx, ty; transform_point(u, v, &tx, &ty);
+            cairo_move_to(cr, cx + tx * radius, cy + ty * radius); cairo_show_text(cr, buf);
+        }
+        for (int az = 0; az < 360; az += 45) {
+            double u, v, tx1, ty1, tx2, ty2;
+            project(90, az, &u, &v); transform_point(u, v, &tx1, &ty1);
+            project(0, az + 180, &u, &v); transform_point(u, v, &tx2, &ty2);
+            cairo_new_path(cr);
+            cairo_move_to(cr, cx + tx1 * radius, cy + ty1 * radius);
+            cairo_line_to(cr, cx + tx2 * radius, cy + ty2 * radius);
+            cairo_stroke(cr);
+        }
+    }
+
+    if (current_options->show_ra_dec_grid) {
+        cairo_set_source_rgba(cr, 0.3, 0.3, 0.8, 0.8);
+        cairo_set_line_width(cr, 1.0);
+        for (int dec = -60; dec <= 80; dec += 20) {
+            int first = 1;
+            for (int ra = 0; ra <= 360; ra += 5) {
+                double alt, az, u, v, tx, ty;
+                get_horizontal_coordinates(ra, dec, *current_loc, *current_dt, &alt, &az);
+                if (project(alt, az + 180.0, &u, &v)) {
+                    transform_point(u, v, &tx, &ty);
+                    if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
+                    else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
+                } else first = 1;
+            }
+            cairo_stroke(cr);
+        }
+        for (int ra_h = 0; ra_h < 24; ra_h += 2) {
+            int first = 1;
+            for (int dec = -90; dec <= 90; dec += 5) {
+                double alt, az, u, v, tx, ty;
+                get_horizontal_coordinates(ra_h * 15.0, dec, *current_loc, *current_dt, &alt, &az);
+                if (project(alt, az + 180.0, &u, &v)) {
+                    transform_point(u, v, &tx, &ty);
+                    if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
+                    else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
+                } else first = 1;
+            }
+            cairo_stroke(cr);
+        }
+    }
+
+    if (current_options->show_ecliptic) {
+        cairo_set_source_rgba(cr, 1.0, 1.0, 0.0, 0.8);
+        cairo_set_line_width(cr, 2.0);
+        int first = 1;
+        double jd = get_julian_day(*current_dt);
+        for (int lon = 0; lon <= 360; lon += 2) {
+            struct ln_lnlat_posn ecl = {lon, 0};
+            struct ln_equ_posn equ;
+            ln_get_equ_from_ecl(&ecl, jd, &equ);
+            double alt, az, u, v, tx, ty;
+            get_horizontal_coordinates(equ.ra, equ.dec, *current_loc, *current_dt, &alt, &az);
+            if (project(alt, az + 180.0, &u, &v)) {
+                transform_point(u, v, &tx, &ty);
+                if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
+                else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
+            } else first = 1;
+        }
+        cairo_stroke(cr);
+    }
+
+    if (current_options->show_constellation_lines) {
+        cairo_set_source_rgba(cr, 0.5, 0.5, 0.8, 0.5);
+        cairo_set_line_width(cr, 1.0);
+        for (int i = 0; i < num_constellations; i++) {
+            double center_x = 0, center_y = 0;
+            int count_pts = 0;
+            for(int j=0; j<constellations[i].num_lines; j++) {
+                int len = constellations[i].line_lengths[j];
+                int first = 1;
+                for (int k=0; k<len; k++) {
+                    double ra = constellations[i].lines[j][k*2];
+                    double dec = constellations[i].lines[j][k*2+1];
+                    double alt, az, u, v, tx, ty;
+                    get_horizontal_coordinates(ra, dec, *current_loc, *current_dt, &alt, &az);
+                    if (project(alt, az + 180.0, &u, &v)) {
+                        transform_point(u, v, &tx, &ty);
+                        center_x += tx; center_y += ty; count_pts++;
+                        if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
+                        else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
+                    } else first = 1;
+                }
+                cairo_stroke(cr);
+            }
+            if (current_options->show_constellation_names && count_pts > 0) {
+                center_x /= count_pts; center_y /= count_pts;
+                cairo_set_source_rgba(cr, 0.8, 0.8, 1.0, 0.7);
+                draw_text_centered(cr, cx + center_x * radius, cy + center_y * radius, constellations[i].id);
+            }
+        }
+    }
+
+    int stars_total_brighter = 0;
+    int stars_visible_in_view = 0;
+
+    if (stars) {
+        for (int i = 0; i < num_stars; i++) {
+            if (stars[i].mag > effective_limit) continue;
+            stars_total_brighter++;
+
+            double alt, az;
+            get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
+            double u, v;
+            if (project(alt, az + 180.0, &u, &v)) {
+                double tx, ty;
+                transform_point(u, v, &tx, &ty);
+
+                double px = cx + tx * radius;
+                double py = cy + ty * radius;
+
+                if (px >= 0 && px <= width && py >= 0 && py <= height) {
+                    stars_visible_in_view++;
+                }
+
+                double calc_size = (effective_m0 - stars[i].mag) * effective_ma;
+                double draw_size = calc_size;
+                double brightness = 1.0;
+
+                if (draw_size < 1.0) {
+                    brightness = draw_size;
+                    if (brightness < 0.1) brightness = 0.1;
+                    draw_size = 1.0;
+                }
+
+                if (current_options->show_star_colors) {
+                    double r, g, b;
+                    bv_to_rgb(stars[i].bv, &r, &g, &b);
+
+                    double sat = current_options->star_saturation;
+                    r = 1.0 + (r - 1.0) * sat;
+                    g = 1.0 + (g - 1.0) * sat;
+                    b = 1.0 + (b - 1.0) * sat;
+
+                    if (r < 0) r = 0;
+                    if (r > 1) r = 1;
+                    if (g < 0) g = 0;
+                    if (g > 1) g = 1;
+                    if (b < 0) b = 0;
+                    if (b > 1) b = 1;
+
+                    cairo_set_source_rgba(cr, r * brightness, g * brightness, b * brightness, 1.0);
+                } else {
+                    cairo_set_source_rgba(cr, brightness, brightness, brightness, 1.0);
+                }
+
+                cairo_new_path(cr);
+                cairo_arc(cr, px, py, draw_size, 0, 2 * M_PI);
+                cairo_fill(cr);
+            }
+        }
+    }
+
+    if (current_options->show_planets) {
+        PlanetID p_ids[] = {PLANET_MERCURY, PLANET_VENUS, PLANET_MARS, PLANET_JUPITER, PLANET_SATURN, PLANET_URANUS, PLANET_NEPTUNE};
+        const char *p_names[] = {"Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"};
+        for (int p=0; p<7; p++) {
+            double alt, az, ra, dec, u, v, tx, ty;
+            get_planet_position(p_ids[p], *current_loc, *current_dt, &alt, &az, &ra, &dec);
+            if (project(alt, az + 180.0, &u, &v)) {
+                transform_point(u, v, &tx, &ty);
+                cairo_set_source_rgb(cr, 1.0, 0.5, 0.5);
+                cairo_arc(cr, cx + tx * radius, cy + ty * radius, 3, 0, 2 * M_PI);
+                cairo_fill(cr);
+                cairo_move_to(cr, cx + tx * radius + 4, cy + ty * radius);
+                cairo_show_text(cr, p_names[p]);
+            }
+        }
+    }
+
+    int num_lists = target_list_get_list_count();
+    for (int l = 0; l < num_lists; l++) {
+        TargetList *tl = target_list_get_list_by_index(l);
+        if (!target_list_is_visible(tl)) continue;
+
+        int cnt = target_list_get_count(tl);
+        for (int i=0; i<cnt; i++) {
+            Target *tgt = target_list_get_target(tl, i);
+            double alt, az, u, v, tx, ty;
+            get_horizontal_coordinates(tgt->ra, tgt->dec, *current_loc, *current_dt, &alt, &az);
+            if (project(alt, az + 180.0, &u, &v)) {
+                transform_point(u, v, &tx, &ty);
+
+                if (tgt == highlighted_target) {
+                    cairo_set_source_rgb(cr, 0.0, 1.0, 1.0); cairo_set_line_width(cr, 3.0);
+                } else {
+                    cairo_set_source_rgb(cr, 1.0, 0.3, 0.3); cairo_set_line_width(cr, 1.5);
+                }
+
+                cairo_new_path(cr);
+                cairo_arc(cr, cx + tx * radius, cy + ty * radius, 6, 0, 2 * M_PI);
+                cairo_stroke(cr);
+                cairo_set_line_width(cr, 1.0);
+                cairo_move_to(cr, cx + tx * radius + 8, cy + ty * radius);
+                cairo_show_text(cr, tgt->name);
+            }
+        }
+    }
+
+    double s_alt, s_az, u, v, tx, ty;
+    get_sun_position(*current_loc, *current_dt, &s_alt, &s_az);
+    if (project(s_alt, s_az + 180.0, &u, &v)) {
+        transform_point(u, v, &tx, &ty);
+        cairo_set_source_rgb(cr, 1, 1, 0);
+        cairo_arc(cr, cx + tx * radius, cy + ty * radius, 5, 0, 2 * M_PI);
+        cairo_fill(cr);
+        cairo_move_to(cr, cx + tx * radius + 6, cy + ty * radius);
+        cairo_show_text(cr, "Sun");
+    }
+
+    double m_alt, m_az, m_ra, m_dec;
+    get_moon_position(*current_loc, *current_dt, &m_alt, &m_az);
+    get_moon_equ_coords(*current_dt, &m_ra, &m_dec);
+    if (project(m_alt, m_az + 180.0, &u, &v)) {
+        transform_point(u, v, &tx, &ty);
+        cairo_set_source_rgb(cr, 0.8, 0.8, 0.8);
+        cairo_arc(cr, cx + tx * radius, cy + ty * radius, 4, 0, 2 * M_PI);
+        cairo_fill(cr);
+        cairo_move_to(cr, cx + tx * radius + 6, cy + ty * radius);
+        cairo_set_source_rgb(cr, 1, 1, 1);
+        cairo_show_text(cr, "Moon");
+        if (current_options->show_moon_circles) {
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.3);
+            cairo_set_line_width(cr, 1.0);
+            for (int r_deg = 5; r_deg <= 20; r_deg += 5) {
+                int first_pt = 1;
+                for (int ang = 0; ang <= 360; ang += 10) {
+                    double theta = ang * M_PI / 180.0; double delta = r_deg * M_PI / 180.0;
+                    double alt0 = m_alt * M_PI / 180.0; double az0 = m_az * M_PI / 180.0;
+                    double sin_alt1 = sin(alt0)*cos(delta) + cos(alt0)*sin(delta)*cos(theta);
+                    double alt1 = asin(sin_alt1);
+                    double y_val = sin(delta)*sin(theta);
+                    double x_val = cos(delta)*cos(alt0) - sin(alt0)*sin(delta)*cos(theta);
+                    double az1 = az0 + atan2(y_val, x_val);
+                    double alt_deg = alt1 * 180.0 / M_PI; double az_deg = az1 * 180.0 / M_PI;
+                    double u2, v2, tx2, ty2;
+                    if (project(alt_deg, az_deg + 180.0, &u2, &v2)) {
+                        transform_point(u2, v2, &tx2, &ty2);
+                        if (first_pt) { cairo_move_to(cr, cx + tx2 * radius, cy + ty2 * radius); first_pt = 0; }
+                        else { cairo_line_to(cr, cx + tx2 * radius, cy + ty2 * radius); }
+                    } else first_pt = 1;
+                }
+                cairo_stroke(cr);
+            }
+        }
+    }
+
+    {
+        double u, v; project(90, 0, &u, &v); double tx, ty; transform_point(u, v, &tx, &ty);
+        cairo_set_source_rgb(cr, 1, 1, 0); cairo_arc(cr, cx + tx * radius, cy + ty * radius, 3, 0, 2 * M_PI); cairo_fill(cr);
+    }
+
+    cairo_restore(cr);
+    cairo_set_source_rgb(cr, 0.2, 0.2, 0.2); cairo_arc(cr, h_cx, h_cy, h_r, 0, 2 * M_PI); cairo_stroke(cr);
+
+    // Info Boxes
+    {
+        double lst = get_lst(*current_dt, *current_loc);
+        while (lst < 0.0) lst += 24.0;
+        while (lst > 24.0) lst -= 24.0;
+        double jd_ut = get_julian_day(*current_dt); struct ln_date ut_date; ln_get_date(jd_ut, &ut_date);
+
+        char buf_loc[64], buf_ut[64], buf_lst[64];
+        char buf_lat[64], buf_lon[64], buf_elev[64];
+
+        snprintf(buf_loc, 64, "Local: %02d:%02d", current_dt->hour, current_dt->minute);
+        snprintf(buf_ut, 64, "UT: %02d:%02d", ut_date.hours, ut_date.minutes);
+        snprintf(buf_lst, 64, "LST: %02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
+
+        snprintf(buf_lat, 64, "Lat: %.4f", current_loc->lat);
+        snprintf(buf_lon, 64, "Lon: %.4f", current_loc->lon);
+        snprintf(buf_elev, 64, "Elev: %.0fm", current_loc->elevation);
+
+        const char *lines[] = {buf_loc, buf_ut, buf_lst, buf_lat, buf_lon, buf_elev};
+        draw_styled_text_box(cr, 10, 10, lines, 6, 0);
+    }
+
+    // Ephemeris Box
+    {
+        // Use Noon JD to ensure we get events for the "current local day" (Morning Rise, Evening Set)
+        DateTime noon_dt = *current_dt;
+        noon_dt.hour = 12; noon_dt.minute = 0; noon_dt.second = 0;
+        double jd_noon = get_julian_day(noon_dt);
+
+        // Original JD for phase calculation (current time)
+        double jd_now = get_julian_day(*current_dt);
+
+        struct ln_lnlat_posn observer = {current_loc->lat, current_loc->lon};
+        struct ln_rst_time rst;
+
+        char buf_header[64];
+        char buf_sunset[64], buf_tw_start[64], buf_tw_end[64], buf_sunrise[64];
+        char buf_mr[64], buf_ms[64], buf_mill[64];
+
+        // Timezone: 0 for UT, current_dt->timezone_offset for Local
+        double tz = current_options->ephemeris_use_ut ? 0.0 : current_dt->timezone_offset;
+
+        snprintf(buf_header, 64, "Ephemeris (%s)", current_options->ephemeris_use_ut ? "UT" : "Local");
+
+        // Solar
+        // libnova apparently returns the next set and rise events.
+        // For standard Northern Hemisphere observation (or typical convention),
+        // if rst.set is in morning and rst.rise in evening, labels might be swapped due to coordinate convention.
+        // We trust the values: if 'Set' is 06:00, it's Sunrise. If 'Rise' is 18:00, it's Sunset.
+        // We swap them here to match user expectation and standard output.
+        ln_get_solar_rst_horizon(jd_noon, &observer, -0.833, &rst);
+        format_rst_time(rst.set, tz, buf_sunset, 64, "Sunset");
+        format_rst_time(rst.rise, tz, buf_sunrise, 64, "Sunrise");
+
+        ln_get_solar_rst_horizon(jd_noon, &observer, -18.0, &rst);
+        format_rst_time(rst.rise, tz, buf_tw_start, 64, "Astro Tw. Start");
+        format_rst_time(rst.set, tz, buf_tw_end, 64, "Astro Tw. End");
+
+        // Lunar (Moon Rise/Set might also be swapped if coordinate system is consistent)
+        ln_get_lunar_rst(jd_noon, &observer, &rst);
+        format_rst_time(rst.set, tz, buf_mr, 64, "Moon Rise");
+        format_rst_time(rst.rise, tz, buf_ms, 64, "Moon Set");
+
+        double phase = ln_get_lunar_disk(jd_now); // 0..1
+        snprintf(buf_mill, 64, "Moon Illum: %.1f%%", phase * 100.0);
+
+        const char *lines[] = {buf_header, buf_sunset, buf_tw_start, buf_tw_end, buf_sunrise, buf_mr, buf_ms, buf_mill};
+
+        double scale = (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
+        double y_offset = 10 + (12.0 * scale * 1.2 * 6 + 10) + 10;
+
+        draw_styled_text_box(cr, 10, y_offset, lines, 8, 0);
+    }
+
+    if (cursor_alt >= 0) {
+        struct ln_lnlat_posn observer; observer.lat = current_loc->lat; observer.lng = current_loc->lon;
+        struct ln_hrz_posn hrz; hrz.az = cursor_az; hrz.alt = cursor_alt;
+        struct ln_equ_posn equ; ln_get_equ_from_hrz(&hrz, &observer, get_julian_day(*current_dt), &equ);
+        struct ln_equ_posn sun_equ, moon_equ; double jd = get_julian_day(*current_dt);
+        ln_get_solar_equ_coords(jd, &sun_equ); ln_get_lunar_equ_coords(jd, &moon_equ);
+        double dist_sun = ln_get_angular_separation(&equ, &sun_equ);
+        double dist_moon = ln_get_angular_separation(&equ, &moon_equ);
+
+        char buf_alt[64], buf_az[64], buf_sun[64], buf_moon[64], buf_coords[64];
+        snprintf(buf_alt, 64, "Alt: %.1f", cursor_alt);
+        snprintf(buf_az, 64, "Az: %.1f", cursor_az);
+        snprintf(buf_sun, 64, "Sun Dist: %.1f", dist_sun);
+        snprintf(buf_moon, 64, "Moon Dist: %.1f", dist_moon);
+        snprintf(buf_coords, 64, "RA:%.2f Dec:%.2f", equ.ra, equ.dec);
+
+        const char *lines[] = {buf_alt, buf_az, buf_sun, buf_moon, buf_coords};
+        draw_styled_text_box(cr, width - 10, 10, lines, 5, 1); // Right aligned
+    }
+
+    // Star Count Box (After Restore)
+    {
+        char count_buf[64];
+        snprintf(count_buf, 64, "Stars: %d / %d", stars_visible_in_view, stars_total_brighter);
+        const char *lines[] = {count_buf};
+        draw_styled_text_box(cr, 10, height - 10 - 30, lines, 1, 0); // Simplified position logic
+    }
+
+    // Zoom and FOV Info (Bottom Right)
+    {
+        double fov = 180.0 / view_zoom;
+        char info_buf[64];
+        snprintf(info_buf, 64, "Zoom: %.2f | FOV: %.1f%s", view_zoom, fov, "\u00B0"); // degree symbol
+        const char *lines[] = {info_buf};
+        draw_styled_text_box(cr, width - 10, height - 10 - 30, lines, 1, 1);
+    }
+}
+
+static void on_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
+    if (click_callback) {
+        GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+        int width = gtk_widget_get_width(widget);
+        int height = gtk_widget_get_height(widget);
+
+        double radius = (width < height ? width : height) / 2.0 - 10;
+        double cx = width / 2.0;
+        double cy = height / 2.0;
+
+        double nx = (x - cx) / radius;
+        double ny = (y - cy) / radius;
+
+        double u, v;
+        untransform_point(nx, ny, &u, &v);
+
+        double alt, az;
+        unproject(u, v, &alt, &az);
+        if (alt >= 0) {
+            click_callback(alt, az);
+        }
+    }
+}
+
+static void on_motion(GtkEventControllerMotion *controller, double x, double y, gpointer user_data) {
+    GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+    int width = gtk_widget_get_width(widget);
+    int height = gtk_widget_get_height(widget);
+
+    double radius = (width < height ? width : height) / 2.0 - 10;
+    double cx = width / 2.0;
+    double cy = height / 2.0;
+
+    double nx = (x - cx) / radius;
+    double ny = (y - cy) / radius;
+
+    double u, v;
+    untransform_point(nx, ny, &u, &v);
+
+    unproject(u, v, &cursor_alt, &cursor_az);
+
+    // Trigger redraw to update cursor info
+    gtk_widget_queue_draw(widget);
+}
+
+static void on_scroll(GtkEventControllerScroll *controller, double dx, double dy, gpointer user_data) {
+    double factor = 1.1;
+    if (dy > 0) factor = 1.0 / 1.1;
+
+    view_zoom *= factor;
+    // Scale pan_y to keep center fixed relative to sky (since pan_x=0)
+    view_pan_y *= factor;
+
+    sky_view_redraw();
+}
+
+static double drag_start_pan_y = 0;
+// Drag State for precise positioning
+static double drag_target_u = 0;
+static double drag_target_v = 0;
+static double drag_target_dist = 0;
+static double drag_target_v_rot_sign = 1.0;
+
+static void on_drag_begin(GtkGestureDrag *gesture, double start_x, double start_y, gpointer user_data) {
+    drag_start_pan_y = view_pan_y;
+
+    GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    int width = gtk_widget_get_width(widget);
+    int height = gtk_widget_get_height(widget);
+    double radius = (width < height ? width : height) / 2.0 - 10;
+    double cx = width / 2.0;
+    double cy = height / 2.0;
+
+    double nx = (start_x - cx) / radius;
+    double ny = (start_y - cy) / radius;
+
+    double u, v;
+    untransform_point(nx, ny, &u, &v);
+
+    drag_target_u = u;
+    drag_target_v = v;
+    drag_target_dist = sqrt(u*u + v*v);
+
+    // Calculate initial v_rot state to preserve hemisphere (North vs South of Zenith)
+    double s_v = ny - view_pan_y;
+    double v_rot = s_v / view_zoom;
+    drag_target_v_rot_sign = (v_rot >= 0) ? 1.0 : -1.0;
+}
+
+static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, double offset_y, gpointer user_data) {
+    GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    int width = gtk_widget_get_width(widget);
+    int height = gtk_widget_get_height(widget);
+    double radius = (width < height ? width : height) / 2.0 - 10;
+    double cx = width / 2.0;
+    double cy = height / 2.0;
+
+    double start_x, start_y;
+    gtk_gesture_drag_get_start_point(gesture, &start_x, &start_y);
+
+    double current_x = start_x + offset_x;
+    double current_y = start_y + offset_y;
+
+    // Target normalized screen position
+    double tx = (current_x - cx) / radius;
+    double ty_req = (current_y - cy) / radius;
+
+    // Avoid singularity at Zenith
+    if (drag_target_dist < 0.001) {
+        // Just Pan Y
+        view_pan_y = ty_req; // v_rot approx 0
+        if (view_pan_y > 0) view_pan_y = 0;
+        sky_view_redraw();
+        return;
+    }
+
+    // 1. Solve Rotation (view_rotation) to match Mouse X (tx)
+    // We want u_rot = tx / Zoom.
+    // u_rot^2 + v_rot^2 = dist^2.
+    // Constrain u_rot to valid range [-dist, dist]
+    double u_rot_target = tx / view_zoom;
+    if (u_rot_target > drag_target_dist) u_rot_target = drag_target_dist;
+    if (u_rot_target < -drag_target_dist) u_rot_target = -drag_target_dist;
+
+    double v_rot_mag = sqrt(drag_target_dist * drag_target_dist - u_rot_target * u_rot_target);
+    double v_rot_target = v_rot_mag * drag_target_v_rot_sign;
+
+    // We want to rotate (drag_target_u, drag_target_v) to (u_rot_target, v_rot_target).
+    // (u, v) rotated by theta is (u', v').
+    // theta = angle(u', v') - angle(u, v).
+    double angle_target = atan2(v_rot_target, u_rot_target);
+    double angle_source = atan2(drag_target_v, drag_target_u);
+    // Standard rotation matrix is [cos -sin; sin cos] which rotates CCW.
+    // My transform_point uses [cos -sin; sin cos].
+    // So 'view_rotation' is the CCW angle.
+    // Wait, let's verify transform_point again.
+    // u_rot = u cos - v sin.
+    // v_rot = u sin + v cos.
+    // This rotates (u,v) by angle 'view_rotation' CCW.
+    // So theta = view_rotation.
+    view_rotation = angle_target - angle_source;
+
+    // 2. Solve Pan Y to match Mouse Y (ty_req)
+    // ty = v_rot * Zoom + PanY
+    view_pan_y = ty_req - v_rot_target * view_zoom;
+
+    // Constraint: Zenith not below center (pan_y <= 0)
+    if (view_pan_y > 0) view_pan_y = 0;
+
+    // Constraint: Pan X is always 0
+    view_pan_x = 0;
+
+    sky_view_redraw();
+}
+
+GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options, void (*on_sky_click)(double, double)) {
+    current_loc = loc;
+    current_dt = dt;
+    current_options = options;
+    click_callback = on_sky_click;
+
+    drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(drawing_area, 400, 400);
-    g_signal_connect(G_OBJECT(drawing_area), "draw", G_CALLBACK(on_draw), app);
+    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing_area), on_draw, NULL, NULL);
 
-    gtk_widget_add_events(drawing_area, GDK_BUTTON_PRESS_MASK);
-    g_signal_connect(G_OBJECT(drawing_area), "button-press-event", G_CALLBACK(on_button_press), app);
+    GtkGesture *gesture = gtk_gesture_click_new();
+    g_signal_connect(gesture, "pressed", G_CALLBACK(on_pressed), NULL);
+    gtk_widget_add_controller(drawing_area, GTK_EVENT_CONTROLLER(gesture));
+
+    GtkEventController *motion = gtk_event_controller_motion_new();
+    g_signal_connect(motion, "motion", G_CALLBACK(on_motion), NULL);
+    gtk_widget_add_controller(drawing_area, motion);
+
+    // Scroll (Zoom)
+    GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+    g_signal_connect(scroll, "scroll", G_CALLBACK(on_scroll), NULL);
+    gtk_widget_add_controller(drawing_area, scroll);
+
+    // Drag (Pan) - Right Button
+    GtkGesture *drag = gtk_gesture_drag_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), 3);
+    g_signal_connect(drag, "drag-begin", G_CALLBACK(on_drag_begin), NULL);
+    g_signal_connect(drag, "drag-update", G_CALLBACK(on_drag_update_handler), NULL);
+    gtk_widget_add_controller(drawing_area, GTK_EVENT_CONTROLLER(drag));
 
     return drawing_area;
 }
 
-void sky_view_redraw(GtkWidget *widget) {
-    gtk_widget_queue_draw(widget);
+void sky_view_redraw() {
+    if (drawing_area) {
+        gtk_widget_queue_draw(drawing_area);
+    }
 }
