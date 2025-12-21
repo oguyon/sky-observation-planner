@@ -585,14 +585,36 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         struct ln_lnlat_posn observer = {current_loc->lon, current_loc->lat};
         struct ln_rst_time rst;
 
-        // Elevation correction for horizon
+        // Elevation correction for horizon (Dip + Refraction adjustment)
         double R = 6378140.0; // Earth Radius in meters
         double h = current_loc->elevation;
+
+        // 1. Horizon Dip
         double dip = 0.0;
         if (h > 0) {
             dip = acos(R / (R + h)) * (180.0 / M_PI);
         }
-        double horizon = -0.833 - dip;
+
+        // 2. Atmospheric Refraction scaling with Altitude
+        // Standard Atmosphere Model
+        double T_std = 15.0; // Sea level temp (C)
+        double P_std = 1013.25; // Sea level pressure (mbar)
+
+        // Temperature at altitude (Lapse rate 6.5 K/km)
+        double T_alt = T_std - 0.0065 * h;
+        if (T_alt < -273.15) T_alt = -273.15; // Limit absolute zero
+
+        // Pressure at altitude (Troposphere formula)
+        double P_alt = P_std * pow(1.0 - 2.25577e-5 * h, 5.25588);
+        if (P_alt < 0) P_alt = 0;
+
+        // Scale standard refraction (0.5667 deg ~ 34 arcmin)
+        double ref_scale = (P_alt / P_std) * (288.15 / (273.15 + T_alt));
+        double refraction = 0.5667 * ref_scale;
+
+        double semidiameter = 0.2666; // ~16 arcmin
+
+        double horizon = -(semidiameter + refraction + dip);
 
         char buf_header[64];
 
