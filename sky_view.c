@@ -643,7 +643,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         char buf_loc[64], buf_ut[64], buf_lst[64], buf_mjd[64];
         char buf_lat[64], buf_lon[64], buf_elev[64];
 
-        snprintf(buf_loc, 64, "Local|%04d-%02d-%02d %02d:%02d:%02d", current_dt->year, current_dt->month, current_dt->day, current_dt->hour, current_dt->minute, current_dt->second);
+        snprintf(buf_loc, 64, "Local|%04d-%02d-%02d %02d:%02d:%02d", current_dt->year, current_dt->month, current_dt->day, current_dt->hour, current_dt->minute, (int)current_dt->second);
         snprintf(buf_ut, 64, "UT|%04d-%02d-%02d %02d:%02d:%02d", ut_date.years, ut_date.months, ut_date.days, ut_date.hours, ut_date.minutes, (int)ut_date.seconds);
         snprintf(buf_lst, 64, "LST|%02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
         snprintf(buf_mjd, 64, "MJD|%.5f", mjd);
@@ -939,7 +939,7 @@ static void on_drag_update_handler(GtkGestureDrag *gesture, double offset_x, dou
 
         // Static variable to store start az? Or use user_data?
         // Let's use a static for simplicity in this context, assuming single drag.
-        static double drag_start_az = -1;
+        // static double drag_start_az = -1; (Unused, removed)
 
         // Hack: Check if this is the first update call?
         // Better: Use drag_begin to store start az.
