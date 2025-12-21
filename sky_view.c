@@ -560,13 +560,13 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         char buf_loc[64], buf_ut[64], buf_lst[64];
         char buf_lat[64], buf_lon[64], buf_elev[64];
 
-        snprintf(buf_loc, 64, "Local: %02d:%02d", current_dt->hour, current_dt->minute);
-        snprintf(buf_ut, 64, "UT: %02d:%02d", ut_date.hours, ut_date.minutes);
-        snprintf(buf_lst, 64, "LST: %02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
+        snprintf(buf_loc, 64, "Local|%02d:%02d", current_dt->hour, current_dt->minute);
+        snprintf(buf_ut, 64, "UT|%02d:%02d", ut_date.hours, ut_date.minutes);
+        snprintf(buf_lst, 64, "LST|%02d:%02d", (int)lst, (int)((lst - (int)lst)*60));
 
-        snprintf(buf_lat, 64, "Lat: %.4f", current_loc->lat);
-        snprintf(buf_lon, 64, "Lon: %.4f", current_loc->lon);
-        snprintf(buf_elev, 64, "Elev: %.0fm", current_loc->elevation);
+        snprintf(buf_lat, 64, "Lat|%.4f", current_loc->lat);
+        snprintf(buf_lon, 64, "Lon|%.4f", current_loc->lon);
+        snprintf(buf_elev, 64, "Elev|%.0fm", current_loc->elevation);
 
         const char *lines[] = {buf_loc, buf_ut, buf_lst, buf_lat, buf_lon, buf_elev};
         draw_styled_text_box(cr, 10, 10, lines, 6, 0);
