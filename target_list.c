@@ -109,18 +109,28 @@ Target *target_list_get_target(TargetList *list, int index) {
 void target_list_add_target(TargetList *list, const char *name, double ra, double dec, double mag, double bv) {
     if (!list) return;
     if (list->count == list->capacity) {
-        list->capacity = list->capacity == 0 ? 4 : list->capacity * 2;
-        list->targets = realloc(list->targets, list->capacity * sizeof(Target*));
+        int new_capacity = list->capacity == 0 ? 4 : list->capacity * 2;
+        Target **new_targets = realloc(list->targets, new_capacity * sizeof(Target*));
+        if (!new_targets) return; // Allocation failed
+        list->targets = new_targets;
+        list->capacity = new_capacity;
     }
+
     list->targets[list->count] = malloc(sizeof(Target));
-    strncpy(list->targets[list->count]->name, name, 63);
-    list->targets[list->count]->name[63] = '\0';
-    list->targets[list->count]->ra = ra;
-    list->targets[list->count]->dec = dec;
-    list->targets[list->count]->mag = mag;
-    list->targets[list->count]->bv = bv;
-    list->count++;
-    notify_change();
+    if (list->targets[list->count]) {
+        // Zero init for safety
+        memset(list->targets[list->count], 0, sizeof(Target));
+
+        strncpy(list->targets[list->count]->name, name, 63);
+        list->targets[list->count]->name[63] = '\0';
+        list->targets[list->count]->ra = ra;
+        list->targets[list->count]->dec = dec;
+        list->targets[list->count]->mag = mag;
+        list->targets[list->count]->bv = bv;
+
+        list->count++;
+        notify_change();
+    }
 }
 
 void target_list_remove_target(TargetList *list, int index) {
