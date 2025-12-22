@@ -29,6 +29,18 @@ static Target *highlighted_target = NULL;
 static int use_horizon_projection = 0;
 static double horizon_center_az = 180.0; // Start facing South(0) or North(180)? Standard skymap N up -> S down. 180 is North.
 
+// Hover State from Elevation View
+static int hover_active = 0;
+static DateTime hover_time;
+static double hover_elev = 0;
+
+void sky_view_set_hover_state(int active, DateTime time, double elev) {
+    hover_active = active;
+    hover_time = time;
+    hover_elev = elev;
+    sky_view_redraw();
+}
+
 void sky_view_toggle_projection() {
     use_horizon_projection = !use_horizon_projection;
     if (use_horizon_projection) {
@@ -595,19 +607,88 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         }
     }
 
+    // Hover Elevation Circle
+    if (hover_active) {
+        cairo_set_source_rgba(cr, 1.0, 1.0, 0.0, 0.5); // Yellow transparent
+        cairo_set_line_width(cr, 2.0);
+
+        // Draw altitude circle at hover_elev
+        int first = 1;
+        cairo_new_path(cr);
+        for (int az = 0; az <= 360; az += 5) {
+            double u, v, tx, ty;
+            if (project(hover_elev, az, &u, &v)) {
+                transform_point(u, v, &tx, &ty);
+                if (first) {
+                    cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
+                    first = 0;
+                } else {
+                    cairo_line_to(cr, cx + tx * radius, cy + ty * radius);
+                }
+            } else first = 1;
+        }
+        cairo_stroke(cr);
+    }
+
     if (highlighted_target) {
-        cairo_set_source_rgba(cr, 0.6, 0.6, 0.6, 0.8);
+        // Calculate Sunset/Sunrise for trajectory limits
+        DateTime noon_dt = *current_dt;
+        noon_dt.hour = 12; noon_dt.minute = 0; noon_dt.second = 0;
+        double jd_noon = get_julian_day(noon_dt);
+
+        struct ln_lnlat_posn observer = {current_loc->lon, current_loc->lat};
+        struct ln_rst_time rst;
+        double horizon = -0.833; // Approx geometrical horizon
+        ln_get_solar_rst_horizon(jd_noon, &observer, horizon, &rst);
+
+        // Determine start (Sunset) and end (Sunrise next day)
+        double jd_start = (rst.set > 0) ? rst.set : jd_noon - 0.25; // Default if no set
+        double jd_end = (rst.rise > 0) ? rst.rise : jd_noon + 0.75; // Default if no rise
+
+        // If rise is before set (e.g., rise 6:00, set 18:00), we want the night *after* this sunset.
+        // So rise should be the *next* rise.
+        if (jd_end < jd_start) {
+             ln_get_solar_rst_horizon(jd_noon + 1.0, &observer, horizon, &rst);
+             jd_end = (rst.rise > 0) ? rst.rise : jd_end + 1.0;
+        }
+
+        // Clip to +/- 12 hours from now to keep it sane
+        double current_jd = get_julian_day(*current_dt);
+        if (jd_start < current_jd - 0.5) jd_start = current_jd - 0.5;
+        if (jd_end > current_jd + 0.5) jd_end = current_jd + 0.5;
+
+        // Ensure start < end
+        if (jd_start >= jd_end) {
+             jd_start = current_jd - 0.25;
+             jd_end = current_jd + 0.25;
+        }
+
         cairo_set_line_width(cr, 3.0);
 
-        double current_jd = get_julian_day(*current_dt);
+        double step_hours = 0.1;
+        double t_start = (jd_start - current_jd) * 24.0;
+        double t_end = (jd_end - current_jd) * 24.0;
+
         int first_pt = 1;
 
-        // Draw path for +/- 6 hours
-        for (double t = -6.0; t <= 6.0; t += 0.1) {
+        // Draw path
+        for (double t = t_start; t <= t_end; t += step_hours) {
             double jd_step = current_jd + t / 24.0;
+
+            // Check Sun Alt for Color
+            struct ln_equ_posn sun_equ;
+            ln_get_solar_equ_coords(jd_step, &sun_equ);
+            struct ln_hrz_posn sun_hrz;
+            ln_get_hrz_from_equ(&sun_equ, &observer, jd_step, &sun_hrz);
+
+            if (sun_hrz.alt > -18.0) {
+                 cairo_set_source_rgba(cr, 1.0, 0.3, 0.3, 0.8); // Red (Twilight/Day)
+            } else {
+                 cairo_set_source_rgba(cr, 0.6, 0.6, 0.6, 0.8); // Grey (Night)
+            }
+
             struct ln_date date;
             ln_get_date(jd_step, &date);
-            // date contains UT components, so timezone_offset must be 0 for correct re-conversion to JD
             DateTime dt_step = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, 0.0};
 
             double alt, az;
@@ -621,23 +702,27 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                     first_pt = 0;
                 } else {
                     cairo_line_to(cr, cx + tx * radius, cy + ty * radius);
+                    cairo_stroke(cr); // Stroke segment to allow color change
+                    cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
                 }
             } else {
                 first_pt = 1;
             }
         }
-        cairo_stroke(cr);
+        cairo_stroke(cr); // Final stroke
 
         // Draw markers
         cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
         cairo_set_line_width(cr, 1.0);
 
-        for (int h = -6; h <= 6; h++) {
-            if (h == 0) continue;
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        double old_font_size = 12.0 * (current_options->font_scale > 0 ? current_options->font_scale : 1.0);
+        cairo_set_font_size(cr, old_font_size * 1.3); // Larger labels
+
+        for (int h = (int)ceil(t_start); h <= (int)floor(t_end); h++) {
             double jd_step = current_jd + h / 24.0;
             struct ln_date date;
             ln_get_date(jd_step, &date);
-            // date contains UT components, so timezone_offset must be 0
             DateTime dt_step = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, 0.0};
 
             double alt, az;
@@ -650,9 +735,29 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                 cairo_fill(cr);
 
                 char label[16];
-                snprintf(label, 16, "%+dh", h);
+                if (h == 0) snprintf(label, 16, "Now");
+                else snprintf(label, 16, "%+dh", h);
                 cairo_move_to(cr, cx + tx * radius + 5, cy + ty * radius - 5);
                 cairo_show_text(cr, label);
+            }
+        }
+
+        // Hover Time Marker
+        if (hover_active) {
+            double jd_hover = get_julian_day(hover_time);
+            // Re-convert to 0-offset for calculation
+            struct ln_date date; ln_get_date(jd_hover, &date);
+            DateTime dt_hover = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, 0.0};
+
+            double alt, az;
+            get_horizontal_coordinates(highlighted_target->ra, highlighted_target->dec, *current_loc, dt_hover, &alt, &az);
+
+            double u, v, tx, ty;
+            if (project(alt, az, &u, &v)) {
+                transform_point(u, v, &tx, &ty);
+                cairo_set_source_rgb(cr, 1.0, 1.0, 0.0);
+                cairo_arc(cr, cx + tx * radius, cy + ty * radius, 6, 0, 2*M_PI);
+                cairo_fill(cr);
             }
         }
     }
