@@ -850,6 +850,10 @@ static void activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(btn_del_target, "clicked", G_CALLBACK(on_delete_target_clicked), NULL);
     gtk_box_append(GTK_BOX(target_box), btn_del_target);
 
+    GtkWidget *btn_clear_sel = gtk_button_new_with_label("Clear Selection");
+    g_signal_connect(btn_clear_sel, "clicked", G_CALLBACK(on_clear_selection_clicked), NULL);
+    gtk_box_append(GTK_BOX(target_box), btn_clear_sel);
+
     refresh_tabs();
 
     gtk_window_present(GTK_WINDOW(window));
