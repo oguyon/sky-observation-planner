@@ -352,10 +352,11 @@ static void on_plot_click(GtkGestureClick *gesture, int n_press, double x, doubl
     double best_dist_sq = 1e9;
 
     for (int i=0; i<candidate_count; i++) {
-        if (roi.active && !is_in_roi(candidates[i].dist, candidates[i].mag)) continue;
+        double val_x = (plot_mode == 0) ? candidates[i].dist : candidates[i].bv;
+        if (roi.active && !is_in_roi(val_x, candidates[i].mag)) continue;
 
         double px, py;
-        map_point(candidates[i].dist, candidates[i].mag, &px, &py);
+        map_point(val_x, candidates[i].mag, &px, &py);
         double d2 = (x-px)*(x-px) + (y-py)*(y-py);
         if (d2 < best_dist_sq) {
             best_dist_sq = d2;
