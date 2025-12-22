@@ -177,14 +177,20 @@ static void on_target_list_changed() {
                 }
 
                 GtkSorter *sorter = gtk_column_view_get_sorter(GTK_COLUMN_VIEW(col_view));
+                // sort_model takes ownership of store (Transfer Full)
                 GtkSortListModel *sort_model = gtk_sort_list_model_new(G_LIST_MODEL(store), sorter);
+
+                // sel takes ownership of sort_model (Transfer Full)
                 GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(sort_model));
                 gtk_single_selection_set_autoselect(sel, FALSE);
 
                 g_signal_connect(sel, "selection-changed", G_CALLBACK(on_target_selection_changed), NULL);
 
+                // set_model adds a reference (Transfer None)
                 gtk_column_view_set_model(GTK_COLUMN_VIEW(col_view), GTK_SELECTION_MODEL(sel));
-                g_object_unref(store);
+
+                // We release our local reference to sel. store and sort_model are owned by the chain.
+                g_object_unref(sel);
             }
         }
     }
@@ -322,7 +328,14 @@ static GtkWidget *create_view_for_list(TargetList *list) {
     gtk_widget_set_vexpand(scrolled_list, TRUE);
     gtk_box_append(GTK_BOX(box), scrolled_list);
 
-    GtkColumnView *col_view = GTK_COLUMN_VIEW(gtk_column_view_new(NULL));
+    GListStore *store = g_list_store_new(TYPE_TARGET_OBJECT);
+    // sel takes ownership of store
+    GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
+    // col_view constructor takes ownership of sel (Transfer Full)
+    GtkColumnView *col_view = GTK_COLUMN_VIEW(gtk_column_view_new(GTK_SELECTION_MODEL(sel)));
+
+    // Do NOT unref store or sel here, as they were consumed by the constructors above.
+
     gtk_widget_set_vexpand(GTK_WIDGET(col_view), TRUE);
     gtk_widget_set_hexpand(GTK_WIDGET(col_view), TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_list), GTK_WIDGET(col_view));

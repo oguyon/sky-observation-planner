@@ -476,10 +476,13 @@ static void populate_list() {
     items[valid_count] = NULL;
 
     source_list_model = gtk_string_list_new(items);
-    GtkSingleSelection *selection = gtk_single_selection_new(G_LIST_MODEL(source_list_model));
-    g_signal_connect(selection, "selection-changed", G_CALLBACK(on_list_selection_changed), NULL);
+    // sel takes ownership of new_model
+    GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(source_list_model));
+    g_signal_connect(sel, "selection-changed", G_CALLBACK(on_list_selection_changed), NULL);
 
-    gtk_column_view_set_model(list_view, GTK_SELECTION_MODEL(selection));
+    // set_model adds reference
+    gtk_column_view_set_model(list_view, GTK_SELECTION_MODEL(sel));
+    g_object_unref(sel);
 
     for (int i=0; i<valid_count; i++) free((char*)items[i]);
     free(items);
