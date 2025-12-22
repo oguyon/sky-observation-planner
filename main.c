@@ -318,14 +318,23 @@ static void on_clear_selection_clicked(GtkButton *btn, gpointer user_data) {
     if (!active_target_list) return;
 
     GtkWidget *page = gtk_notebook_get_nth_page(target_notebook, gtk_notebook_get_current_page(target_notebook));
+    if (!page) return;
     GtkWidget *scrolled = gtk_widget_get_first_child(page);
     while (scrolled && !GTK_IS_SCROLLED_WINDOW(scrolled)) scrolled = gtk_widget_get_next_sibling(scrolled);
     if (!scrolled) return;
 
     GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+    if (!col_view || !GTK_IS_COLUMN_VIEW(col_view)) return;
+
     GtkSelectionModel *model = gtk_column_view_get_model(GTK_COLUMN_VIEW(col_view));
-    GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
-    gtk_single_selection_set_selected(sel, GTK_INVALID_LIST_POSITION);
+    if (GTK_IS_SINGLE_SELECTION(model)) {
+        GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
+        gtk_single_selection_set_selected(sel, GTK_INVALID_LIST_POSITION);
+    }
+
+    // Explicitly clear views just in case signal doesn't trigger (e.g. if already considered invalid)
+    sky_view_set_highlighted_target(NULL);
+    elevation_view_set_highlighted_target(NULL);
 }
 
 // Save/Load
