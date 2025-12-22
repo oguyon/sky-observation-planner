@@ -418,6 +418,10 @@ static void on_time_selected_from_plot(DateTime new_dt) {
     update_all_views();
 }
 
+static void on_elevation_hover(int active, DateTime time, double elev) {
+    sky_view_set_hover_state(active, time, elev);
+}
+
 // Toggles (Simplified helper?) No, keep explicit for GCallback casting
 static void on_toggle_constellation_lines(GtkCheckButton *source, gpointer user_data) {
     sky_options.show_constellation_lines = gtk_check_button_get_active(source);
@@ -583,7 +587,7 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     // Elevation Area (Top Half)
     GtkWidget *status_label = gtk_label_new("Hover over graph");
-    GtkWidget *elev_area = create_elevation_view(&loc, &dt, GTK_LABEL(status_label), on_time_selected_from_plot);
+    GtkWidget *elev_area = create_elevation_view(&loc, &dt, GTK_LABEL(status_label), on_time_selected_from_plot, on_elevation_hover);
 
     gtk_widget_set_vexpand(elev_area, TRUE);
     gtk_widget_set_hexpand(elev_area, TRUE);
