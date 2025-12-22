@@ -9,7 +9,14 @@ static DateTime *current_dt;
 static GtkWidget *drawing_area;
 static GtkLabel *status_label = NULL;
 static TimeSelectedCallback time_callback = NULL;
+static ElevationHoverCallback hover_callback = NULL;
 static Target *highlighted_target = NULL;
+
+// Helper state to store last motion coordinates for drawing the crosshair/line
+static int last_motion_valid = 0;
+static double last_motion_x = 0;
+static double last_motion_y = 0;
+static double last_motion_alt = 0;
 
 void elevation_view_set_highlighted_target(Target *target) {
     highlighted_target = target;
@@ -157,29 +164,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     double y_20 = DEG_TO_Y(20);
     cairo_pattern_t *pat = cairo_pattern_create_linear(0, y_20, 0, y_0);
 
-    // y_20 (Top) -> Black (Color 0,0,0 alpha 0?) User said "fading to black".
-    // "light transparent yellow at elevation=15"
-    // "red at elevation=0" (Bottom of gradient)
-    // 0 -> Red
-    // 15 -> Yellow
-    // 20 -> Black
-
-    // pattern coords are user space.
-    // y_20 is at top (Elev 20). y_0 is at bottom (Elev 0).
-    // offset 0 is at start (y_20), offset 1 is at end (y_0).
-
-    // We want:
-    // Elev 20 (offset 0): Black/Transparent
-    // Elev 15 (offset ?) : Yellow
-    // Elev 0 (offset 1): Red
-
-    // Map Elev to offset in [0, 20] range inverted?
-    // Total range 20.
-    // Elev 20 -> 0.0
-    // Elev 15 -> 0.25 (5/20 from top)
-    // Elev 0 -> 1.0
-
-    cairo_pattern_add_color_stop_rgba(pat, 0.0, 0, 0, 0, 0.0); // Black Transparent? Or Solid Black? "Fading to black at 20" usually implies "darkness". But if I make it solid black, it hides the graph. Assuming Transparent Black (shadow) or just Transparent. Let's try (0,0,0,0).
+    cairo_pattern_add_color_stop_rgba(pat, 0.0, 0, 0, 0, 0.0); // Black Transparent
     cairo_pattern_add_color_stop_rgba(pat, 0.25, 1, 1, 0, 0.3); // Transparent Yellow
     cairo_pattern_add_color_stop_rgba(pat, 1.0, 1, 0, 0, 0.3); // Transparent Red at 0
 
@@ -189,8 +174,6 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     cairo_pattern_destroy(pat);
 
     // Axes and Labels
-    cairo_set_source_rgb(cr, 0, 0, 0); // Black axes (might need contrast adjustment on dark bg, but gradient handles it)
-    // Actually, on dark bg, black axes might be invisible. Let's make axes White or Light Grey.
     cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
 
     cairo_move_to(cr, margin_left, margin_top);
@@ -244,6 +227,25 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         cairo_move_to(cr, x_now, margin_top);
         cairo_line_to(cr, x_now, height - margin_bottom);
         cairo_stroke(cr);
+    }
+
+    // Cursor Horizontal Line & Label
+    if (last_motion_valid) {
+        cairo_set_source_rgb(cr, 0.5, 0.5, 0.5); // Grey
+        cairo_set_line_width(cr, 1.0);
+        cairo_set_dash(cr, (double[]){4.0, 4.0}, 2, 0); // Dashed
+
+        cairo_move_to(cr, margin_left, last_motion_y);
+        cairo_line_to(cr, width - margin_right, last_motion_y);
+        cairo_stroke(cr);
+
+        cairo_set_dash(cr, NULL, 0, 0); // Reset dash
+
+        char elev_buf[16];
+        snprintf(elev_buf, 16, "%.1f", last_motion_alt);
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0); // White text
+        cairo_move_to(cr, width - margin_right - 30, last_motion_y - 5);
+        cairo_show_text(cr, elev_buf);
     }
 
     cairo_set_line_width(cr, 1.5);
@@ -313,6 +315,16 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     }
 }
 
+static void on_leave(GtkEventControllerMotion *controller, gpointer user_data) {
+    if (status_label) gtk_label_set_text(status_label, "");
+    last_motion_valid = 0;
+    if (hover_callback) {
+        DateTime dummy = {0};
+        hover_callback(0, dummy, 0);
+    }
+    elevation_view_redraw();
+}
+
 static void on_motion(GtkEventControllerMotion *controller, double x, double y, gpointer user_data) {
     if (!status_label || !drawing_area) return;
 
@@ -327,6 +339,12 @@ static void on_motion(GtkEventControllerMotion *controller, double x, double y, 
 
     if (x < margin_left || x > width - margin_right || y < margin_top || y > height - margin_bottom) {
         gtk_label_set_text(status_label, "");
+        last_motion_valid = 0;
+        if (hover_callback) {
+            DateTime dummy = {0};
+            hover_callback(0, dummy, 0);
+        }
+        elevation_view_redraw();
         return;
     }
 
@@ -341,6 +359,17 @@ static void on_motion(GtkEventControllerMotion *controller, double x, double y, 
     char buffer[64];
     snprintf(buffer, sizeof(buffer), "Time: %02d:%02d, Elevation: %.1f deg", t.hour, t.minute, alt);
     gtk_label_set_text(status_label, buffer);
+
+    last_motion_valid = 1;
+    last_motion_x = x;
+    last_motion_y = y;
+    last_motion_alt = alt;
+
+    if (hover_callback) {
+        hover_callback(1, t, alt);
+    }
+
+    elevation_view_redraw();
 }
 
 static void update_time_from_x(double x, int width) {
@@ -372,11 +401,12 @@ static void on_drag_update(GtkGestureDrag *gesture, double offset_x, double offs
     update_time_from_x(start_x + offset_x, gtk_widget_get_width(widget));
 }
 
-GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *label, TimeSelectedCallback on_time_selected) {
+GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *label, TimeSelectedCallback on_time_selected, ElevationHoverCallback on_hover) {
     current_loc = loc;
     current_dt = dt;
     status_label = label;
     time_callback = on_time_selected;
+    hover_callback = on_hover;
 
     drawing_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(drawing_area, 400, 200);
@@ -384,6 +414,7 @@ GtkWidget *create_elevation_view(Location *loc, DateTime *dt, GtkLabel *label, T
 
     GtkEventController *motion_controller = gtk_event_controller_motion_new();
     g_signal_connect(motion_controller, "motion", G_CALLBACK(on_motion), NULL);
+    g_signal_connect(motion_controller, "leave", G_CALLBACK(on_leave), NULL);
     gtk_widget_add_controller(drawing_area, motion_controller);
 
     GtkGesture *click_controller = gtk_gesture_click_new();
