@@ -1,5 +1,6 @@
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
+#include <gdk/gdkkeysyms.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -129,6 +130,7 @@ static void on_target_list_changed() {
 
                 GtkStringList *new_model = gtk_string_list_new(items);
                 GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(new_model));
+                gtk_single_selection_set_autoselect(sel, FALSE); // Allow unselecting
                 g_signal_connect(sel, "selection-changed", G_CALLBACK(on_target_selection_changed), NULL);
 
                 gtk_column_view_set_model(GTK_COLUMN_VIEW(col_view), GTK_SELECTION_MODEL(sel));
@@ -152,6 +154,20 @@ static void target_list_bind_cb(GtkSignalListItemFactory *self, GtkListItem *lis
     gtk_label_set_text(GTK_LABEL(label), gtk_string_object_get_string(strobj));
 }
 
+static gboolean on_list_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) {
+    if (keyval == GDK_KEY_Escape) {
+        GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+        if (GTK_IS_COLUMN_VIEW(widget)) {
+            GtkSelectionModel *model = gtk_column_view_get_model(GTK_COLUMN_VIEW(widget));
+            if (GTK_IS_SINGLE_SELECTION(model)) {
+                gtk_single_selection_set_selected(GTK_SINGLE_SELECTION(model), GTK_INVALID_LIST_POSITION);
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
 // Helper to create a view for a list
 static GtkWidget *create_view_for_list(TargetList *list) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -171,6 +187,10 @@ static GtkWidget *create_view_for_list(TargetList *list) {
     gtk_widget_set_vexpand(GTK_WIDGET(col_view), TRUE);
     gtk_widget_set_hexpand(GTK_WIDGET(col_view), TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_list), GTK_WIDGET(col_view));
+
+    GtkEventController *key_controller = gtk_event_controller_key_new();
+    g_signal_connect(key_controller, "key-pressed", G_CALLBACK(on_list_key_pressed), NULL);
+    gtk_widget_add_controller(GTK_WIDGET(col_view), key_controller);
 
     GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
     g_signal_connect(factory, "setup", G_CALLBACK(target_list_setup_cb), NULL);
