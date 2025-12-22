@@ -39,6 +39,24 @@ void get_horizontal_coordinates(double ra, double dec, Location loc, DateTime dt
     *az = hrz.az;
 }
 
+void get_equatorial_coordinates(double alt, double az, Location loc, DateTime dt, double *ra, double *dec) {
+    struct ln_lnlat_posn observer;
+    observer.lat = loc.lat;
+    observer.lng = loc.lon;
+
+    struct ln_hrz_posn hrz;
+    hrz.az = az;
+    hrz.alt = alt;
+
+    double JD = get_julian_day(dt);
+
+    struct ln_equ_posn equ;
+    ln_get_equ_from_hrz(&hrz, &observer, JD, &equ);
+
+    if (ra) *ra = equ.ra;
+    if (dec) *dec = equ.dec;
+}
+
 void get_sun_position(Location loc, DateTime dt, double *alt, double *az) {
     double JD = get_julian_day(dt);
     struct ln_lnlat_posn observer;
