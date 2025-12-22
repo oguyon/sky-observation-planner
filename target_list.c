@@ -100,7 +100,7 @@ Target *target_list_get_target(TargetList *list, int index) {
     return &list->targets[index];
 }
 
-void target_list_add_target(TargetList *list, const char *name, double ra, double dec, double mag) {
+void target_list_add_target(TargetList *list, const char *name, double ra, double dec, double mag, double bv) {
     if (!list) return;
     if (list->count == list->capacity) {
         list->capacity = list->capacity == 0 ? 4 : list->capacity * 2;
@@ -111,6 +111,7 @@ void target_list_add_target(TargetList *list, const char *name, double ra, doubl
     list->targets[list->count].ra = ra;
     list->targets[list->count].dec = dec;
     list->targets[list->count].mag = mag;
+    list->targets[list->count].bv = bv;
     list->count++;
     notify_change();
 }
@@ -144,6 +145,7 @@ int target_list_save(TargetList *list, const char *filename) {
         json_object_set_new(t, "ra", json_real(list->targets[i].ra));
         json_object_set_new(t, "dec", json_real(list->targets[i].dec));
         json_object_set_new(t, "mag", json_real(list->targets[i].mag));
+        json_object_set_new(t, "bv", json_real(list->targets[i].bv));
         json_array_append_new(arr, t);
     }
     json_object_set_new(root, "targets", arr);
@@ -172,8 +174,9 @@ TargetList *target_list_load(const char *filename) {
             double ra = json_real_value(json_object_get(value, "ra"));
             double dec = json_real_value(json_object_get(value, "dec"));
             double mag = json_real_value(json_object_get(value, "mag"));
+            double bv = json_real_value(json_object_get(value, "bv")); // Defaults to 0 if missing
             if (t_name) {
-                target_list_add_target(list, t_name, ra, dec, mag);
+                target_list_add_target(list, t_name, ra, dec, mag, bv);
             }
         }
     }
@@ -192,6 +195,7 @@ char *target_list_serialize_targets(TargetList *list, int *indices, int count) {
             json_object_set_new(t, "ra", json_real(list->targets[idx].ra));
             json_object_set_new(t, "dec", json_real(list->targets[idx].dec));
             json_object_set_new(t, "mag", json_real(list->targets[idx].mag));
+            json_object_set_new(t, "bv", json_real(list->targets[idx].bv));
             json_array_append_new(arr, t);
         }
     }
@@ -216,8 +220,9 @@ void target_list_deserialize_and_add(TargetList *list, const char *data) {
         double ra = json_real_value(json_object_get(value, "ra"));
         double dec = json_real_value(json_object_get(value, "dec"));
         double mag = json_real_value(json_object_get(value, "mag"));
+        double bv = json_real_value(json_object_get(value, "bv"));
         if (name) {
-            target_list_add_target(list, name, ra, dec, mag);
+            target_list_add_target(list, name, ra, dec, mag, bv);
         }
     }
     json_decref(arr);

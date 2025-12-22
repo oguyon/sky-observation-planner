@@ -10,6 +10,7 @@ typedef struct {
     double ra; // degrees
     double dec; // degrees
     double mag;
+    double bv; // Color Index
 } Target;
 
 typedef struct TargetList TargetList;
@@ -26,7 +27,7 @@ void target_list_delete(TargetList *list);
 const char *target_list_get_name(TargetList *list);
 int target_list_get_count(TargetList *list);
 Target *target_list_get_target(TargetList *list, int index);
-void target_list_add_target(TargetList *list, const char *name, double ra, double dec, double mag);
+void target_list_add_target(TargetList *list, const char *name, double ra, double dec, double mag, double bv);
 void target_list_remove_target(TargetList *list, int index);
 void target_list_clear(TargetList *list);
 

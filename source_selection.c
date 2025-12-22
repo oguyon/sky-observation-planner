@@ -514,7 +514,7 @@ static TargetList *dlg_target_list;
 static void on_add_target_clicked(GtkButton *btn, gpointer user_data) {
     if (selected_candidate_index >= 0 && selected_candidate_index < candidate_count) {
         if (dlg_target_list) {
-            target_list_add_target(dlg_target_list, candidates[selected_candidate_index].name, candidates[selected_candidate_index].ra, candidates[selected_candidate_index].dec, candidates[selected_candidate_index].mag);
+            target_list_add_target(dlg_target_list, candidates[selected_candidate_index].name, candidates[selected_candidate_index].ra, candidates[selected_candidate_index].dec, candidates[selected_candidate_index].mag, candidates[selected_candidate_index].bv);
             sky_view_redraw();
             elevation_view_redraw();
         }
