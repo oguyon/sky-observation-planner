@@ -30,6 +30,7 @@ typedef enum {
 } PlanetID;
 
 void get_horizontal_coordinates(double ra, double dec, Location loc, DateTime dt, double *alt, double *az);
+void get_equatorial_coordinates(double alt, double az, Location loc, DateTime dt, double *ra, double *dec);
 void get_sun_position(Location loc, DateTime dt, double *alt, double *az);
 void get_moon_position(Location loc, DateTime dt, double *alt, double *az);
 void get_planet_position(PlanetID planet, Location loc, DateTime dt, double *alt, double *az, double *ra, double *dec);
