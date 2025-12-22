@@ -102,8 +102,8 @@ static int project(double alt, double az, double *x, double *y) {
         double r = 1.0 - alt / 90.0;
         if (r < 0) r = 0;
         double az_rad = az * M_PI / 180.0;
-        *x = -r * sin(az_rad);
-        *y = -r * cos(az_rad);
+        *x = r * sin(az_rad);
+        *y = r * cos(az_rad);
         return 1;
     }
 }
@@ -162,7 +162,7 @@ static void unproject(double x, double y, double *alt, double *az) {
             return;
         }
         *alt = 90.0 * (1.0 - r);
-        double angle = atan2(-x, -y);
+        double angle = atan2(x, y);
         *az = angle * 180.0 / M_PI;
 
         if (*az < 0) *az += 360.0;
@@ -358,14 +358,14 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             cairo_arc(cr, h_cx, h_cy, t_r, 0, 2 * M_PI);
             cairo_stroke(cr);
             char buf[10]; sprintf(buf, "%d", alt);
-            double u, v; project(alt, 180 + 180, &u, &v);
+            double u, v; project(alt, 180, &u, &v);
             double tx, ty; transform_point(u, v, &tx, &ty);
             cairo_move_to(cr, cx + tx * radius, cy + ty * radius); cairo_show_text(cr, buf);
         }
         for (int az = 0; az < 360; az += 45) {
             double u, v, tx1, ty1, tx2, ty2;
             project(90, az, &u, &v); transform_point(u, v, &tx1, &ty1);
-            project(0, az + 180, &u, &v); transform_point(u, v, &tx2, &ty2);
+            project(0, az, &u, &v); transform_point(u, v, &tx2, &ty2);
             cairo_new_path(cr);
             cairo_move_to(cr, cx + tx1 * radius, cy + ty1 * radius);
             cairo_line_to(cr, cx + tx2 * radius, cy + ty2 * radius);
@@ -381,7 +381,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             for (int ra = 0; ra <= 360; ra += 5) {
                 double alt, az, u, v, tx, ty;
                 get_horizontal_coordinates(ra, dec, *current_loc, *current_dt, &alt, &az);
-                if (project(alt, az + 180.0, &u, &v)) {
+                if (project(alt, az, &u, &v)) {
                     transform_point(u, v, &tx, &ty);
                     if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
                     else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
@@ -394,7 +394,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             for (int dec = -90; dec <= 90; dec += 5) {
                 double alt, az, u, v, tx, ty;
                 get_horizontal_coordinates(ra_h * 15.0, dec, *current_loc, *current_dt, &alt, &az);
-                if (project(alt, az + 180.0, &u, &v)) {
+                if (project(alt, az, &u, &v)) {
                     transform_point(u, v, &tx, &ty);
                     if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
                     else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
@@ -415,7 +415,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             ln_get_equ_from_ecl(&ecl, jd, &equ);
             double alt, az, u, v, tx, ty;
             get_horizontal_coordinates(equ.ra, equ.dec, *current_loc, *current_dt, &alt, &az);
-            if (project(alt, az + 180.0, &u, &v)) {
+            if (project(alt, az, &u, &v)) {
                 transform_point(u, v, &tx, &ty);
                 if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
                 else { cairo_line_to(cr, cx + tx * radius, cy + ty * radius); }
@@ -438,7 +438,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                     double dec = constellations[i].lines[j][k*2+1];
                     double alt, az, u, v, tx, ty;
                     get_horizontal_coordinates(ra, dec, *current_loc, *current_dt, &alt, &az);
-                    if (project(alt, az + 180.0, &u, &v)) {
+                    if (project(alt, az, &u, &v)) {
                         transform_point(u, v, &tx, &ty);
                         center_x += tx; center_y += ty; count_pts++;
                         if (first) { cairo_move_to(cr, cx + tx * radius, cy + ty * radius); first = 0; }
@@ -466,7 +466,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             double alt, az;
             get_horizontal_coordinates(stars[i].ra, stars[i].dec, *current_loc, *current_dt, &alt, &az);
             double u, v;
-            if (project(alt, az + 180.0, &u, &v)) {
+            if (project(alt, az, &u, &v)) {
                 double tx, ty;
                 transform_point(u, v, &tx, &ty);
 
@@ -521,7 +521,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         for (int p=0; p<7; p++) {
             double alt, az, ra, dec, u, v, tx, ty;
             get_planet_position(p_ids[p], *current_loc, *current_dt, &alt, &az, &ra, &dec);
-            if (project(alt, az + 180.0, &u, &v)) {
+            if (project(alt, az, &u, &v)) {
                 transform_point(u, v, &tx, &ty);
                 cairo_set_source_rgb(cr, 1.0, 0.5, 0.5);
                 cairo_arc(cr, cx + tx * radius, cy + ty * radius, 3, 0, 2 * M_PI);
@@ -542,7 +542,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             Target *tgt = target_list_get_target(tl, i);
             double alt, az, u, v, tx, ty;
             get_horizontal_coordinates(tgt->ra, tgt->dec, *current_loc, *current_dt, &alt, &az);
-            if (project(alt, az + 180.0, &u, &v)) {
+            if (project(alt, az, &u, &v)) {
                 transform_point(u, v, &tx, &ty);
 
                 if (tgt == highlighted_target) {
@@ -563,7 +563,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
     double s_alt, s_az, u, v, tx, ty;
     get_sun_position(*current_loc, *current_dt, &s_alt, &s_az);
-    if (project(s_alt, s_az + 180.0, &u, &v)) {
+    if (project(s_alt, s_az, &u, &v)) {
         transform_point(u, v, &tx, &ty);
         cairo_set_source_rgb(cr, 1, 1, 0);
         cairo_arc(cr, cx + tx * radius, cy + ty * radius, 5, 0, 2 * M_PI);
@@ -575,7 +575,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     double m_alt, m_az, m_ra, m_dec;
     get_moon_position(*current_loc, *current_dt, &m_alt, &m_az);
     get_moon_equ_coords(*current_dt, &m_ra, &m_dec);
-    if (project(m_alt, m_az + 180.0, &u, &v)) {
+    if (project(m_alt, m_az, &u, &v)) {
         transform_point(u, v, &tx, &ty);
         cairo_set_source_rgb(cr, 0.8, 0.8, 0.8);
         cairo_arc(cr, cx + tx * radius, cy + ty * radius, 4, 0, 2 * M_PI);
@@ -598,7 +598,7 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
                     double az1 = az0 + atan2(y_val, x_val);
                     double alt_deg = alt1 * 180.0 / M_PI; double az_deg = az1 * 180.0 / M_PI;
                     double u2, v2, tx2, ty2;
-                    if (project(alt_deg, az_deg + 180.0, &u2, &v2)) {
+                    if (project(alt_deg, az_deg, &u2, &v2)) {
                         transform_point(u2, v2, &tx2, &ty2);
                         if (first_pt) { cairo_move_to(cr, cx + tx2 * radius, cy + ty2 * radius); first_pt = 0; }
                         else { cairo_line_to(cr, cx + tx2 * radius, cy + ty2 * radius); }
