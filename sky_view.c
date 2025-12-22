@@ -351,24 +351,58 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     if (current_options->show_alt_az_grid) {
         cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.8);
         cairo_set_line_width(cr, 1.0);
-        for (int alt = 30; alt < 90; alt += 30) {
-            double r_alt = 1.0 - alt / 90.0;
-            double t_r = r_alt * radius * view_zoom;
+
+        // Altitude Circles (Generic Projection)
+        for (int alt = 10; alt < 90; alt += 10) {
+            int first = 1;
             cairo_new_path(cr);
-            cairo_arc(cr, h_cx, h_cy, t_r, 0, 2 * M_PI);
+            for (int az = 0; az <= 360; az += 5) {
+                double u, v, tx, ty;
+                if (project(alt, az, &u, &v)) {
+                    transform_point(u, v, &tx, &ty);
+                    if (first) {
+                        cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
+                        first = 0;
+                    } else {
+                        cairo_line_to(cr, cx + tx * radius, cy + ty * radius);
+                    }
+                } else {
+                    first = 1;
+                }
+            }
             cairo_stroke(cr);
-            char buf[10]; sprintf(buf, "%d", alt);
-            double u, v; project(alt, 180, &u, &v);
-            double tx, ty; transform_point(u, v, &tx, &ty);
-            cairo_move_to(cr, cx + tx * radius, cy + ty * radius); cairo_show_text(cr, buf);
+
+            // Label
+            if (alt % 30 == 0) {
+                 char buf[10]; sprintf(buf, "%d", alt);
+                 double u, v;
+                 if (project(alt, 180, &u, &v)) {
+                     double tx, ty; transform_point(u, v, &tx, &ty);
+                     cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
+                     cairo_show_text(cr, buf);
+                 }
+            }
         }
+
+        // Azimuth Lines (Generic Projection)
         for (int az = 0; az < 360; az += 45) {
-            double u, v, tx1, ty1, tx2, ty2;
-            project(90, az, &u, &v); transform_point(u, v, &tx1, &ty1);
-            project(0, az, &u, &v); transform_point(u, v, &tx2, &ty2);
+            int first = 1;
             cairo_new_path(cr);
-            cairo_move_to(cr, cx + tx1 * radius, cy + ty1 * radius);
-            cairo_line_to(cr, cx + tx2 * radius, cy + ty2 * radius);
+            // From Horizon (0) to Zenith (90)
+            for (int alt = 0; alt <= 90; alt += 2) {
+                double u, v, tx, ty;
+                if (project(alt, az, &u, &v)) {
+                    transform_point(u, v, &tx, &ty);
+                    if (first) {
+                        cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
+                        first = 0;
+                    } else {
+                        cairo_line_to(cr, cx + tx * radius, cy + ty * radius);
+                    }
+                } else {
+                    first = 1;
+                }
+            }
             cairo_stroke(cr);
         }
     }
