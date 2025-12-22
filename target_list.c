@@ -6,7 +6,7 @@
 
 struct TargetList {
     char name[128];
-    Target *targets;
+    Target **targets;
     int count;
     int capacity;
     bool visible;
@@ -29,6 +29,9 @@ void target_list_init() {
 
 void target_list_cleanup() {
     for (int i=0; i<list_count; i++) {
+        for (int j=0; j<lists[i]->count; j++) {
+            free(lists[i]->targets[j]);
+        }
         free(lists[i]->targets);
         free(lists[i]);
     }
@@ -75,6 +78,9 @@ void target_list_delete(TargetList *list) {
     }
     if (index == -1) return;
 
+    for (int j=0; j<list->count; j++) {
+        free(list->targets[j]);
+    }
     free(list->targets);
     free(list);
 
@@ -97,27 +103,29 @@ int target_list_get_count(TargetList *list) {
 
 Target *target_list_get_target(TargetList *list, int index) {
     if (!list || index < 0 || index >= list->count) return NULL;
-    return &list->targets[index];
+    return list->targets[index];
 }
 
 void target_list_add_target(TargetList *list, const char *name, double ra, double dec, double mag, double bv) {
     if (!list) return;
     if (list->count == list->capacity) {
         list->capacity = list->capacity == 0 ? 4 : list->capacity * 2;
-        list->targets = realloc(list->targets, list->capacity * sizeof(Target));
+        list->targets = realloc(list->targets, list->capacity * sizeof(Target*));
     }
-    strncpy(list->targets[list->count].name, name, 63);
-    list->targets[list->count].name[63] = '\0';
-    list->targets[list->count].ra = ra;
-    list->targets[list->count].dec = dec;
-    list->targets[list->count].mag = mag;
-    list->targets[list->count].bv = bv;
+    list->targets[list->count] = malloc(sizeof(Target));
+    strncpy(list->targets[list->count]->name, name, 63);
+    list->targets[list->count]->name[63] = '\0';
+    list->targets[list->count]->ra = ra;
+    list->targets[list->count]->dec = dec;
+    list->targets[list->count]->mag = mag;
+    list->targets[list->count]->bv = bv;
     list->count++;
     notify_change();
 }
 
 void target_list_remove_target(TargetList *list, int index) {
     if (!list || index < 0 || index >= list->count) return;
+    free(list->targets[index]);
     for (int i = index; i < list->count - 1; i++) {
         list->targets[i] = list->targets[i + 1];
     }
@@ -127,6 +135,9 @@ void target_list_remove_target(TargetList *list, int index) {
 
 void target_list_clear(TargetList *list) {
     if (!list) return;
+    for (int i=0; i<list->count; i++) {
+        free(list->targets[i]);
+    }
     free(list->targets);
     list->targets = NULL;
     list->count = 0;
@@ -141,11 +152,11 @@ int target_list_save(TargetList *list, const char *filename) {
     json_t *arr = json_array();
     for (int i=0; i<list->count; i++) {
         json_t *t = json_object();
-        json_object_set_new(t, "name", json_string(list->targets[i].name));
-        json_object_set_new(t, "ra", json_real(list->targets[i].ra));
-        json_object_set_new(t, "dec", json_real(list->targets[i].dec));
-        json_object_set_new(t, "mag", json_real(list->targets[i].mag));
-        json_object_set_new(t, "bv", json_real(list->targets[i].bv));
+        json_object_set_new(t, "name", json_string(list->targets[i]->name));
+        json_object_set_new(t, "ra", json_real(list->targets[i]->ra));
+        json_object_set_new(t, "dec", json_real(list->targets[i]->dec));
+        json_object_set_new(t, "mag", json_real(list->targets[i]->mag));
+        json_object_set_new(t, "bv", json_real(list->targets[i]->bv));
         json_array_append_new(arr, t);
     }
     json_object_set_new(root, "targets", arr);
@@ -191,11 +202,11 @@ char *target_list_serialize_targets(TargetList *list, int *indices, int count) {
         int idx = indices[i];
         if (idx >= 0 && idx < list->count) {
             json_t *t = json_object();
-            json_object_set_new(t, "name", json_string(list->targets[idx].name));
-            json_object_set_new(t, "ra", json_real(list->targets[idx].ra));
-            json_object_set_new(t, "dec", json_real(list->targets[idx].dec));
-            json_object_set_new(t, "mag", json_real(list->targets[idx].mag));
-            json_object_set_new(t, "bv", json_real(list->targets[idx].bv));
+            json_object_set_new(t, "name", json_string(list->targets[idx]->name));
+            json_object_set_new(t, "ra", json_real(list->targets[idx]->ra));
+            json_object_set_new(t, "dec", json_real(list->targets[idx]->dec));
+            json_object_set_new(t, "mag", json_real(list->targets[idx]->mag));
+            json_object_set_new(t, "bv", json_real(list->targets[idx]->bv));
             json_array_append_new(arr, t);
         }
     }
