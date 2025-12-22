@@ -313,6 +313,21 @@ static void on_delete_target_clicked(GtkButton *btn, gpointer user_data) {
     }
 }
 
+// Clear Selection
+static void on_clear_selection_clicked(GtkButton *btn, gpointer user_data) {
+    if (!active_target_list) return;
+
+    GtkWidget *page = gtk_notebook_get_nth_page(target_notebook, gtk_notebook_get_current_page(target_notebook));
+    GtkWidget *scrolled = gtk_widget_get_first_child(page);
+    while (scrolled && !GTK_IS_SCROLLED_WINDOW(scrolled)) scrolled = gtk_widget_get_next_sibling(scrolled);
+    if (!scrolled) return;
+
+    GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+    GtkSelectionModel *model = gtk_column_view_get_model(GTK_COLUMN_VIEW(col_view));
+    GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
+    gtk_single_selection_set_selected(sel, GTK_INVALID_LIST_POSITION);
+}
+
 // Save/Load
 static void on_save_finish(GObject *source_object, GAsyncResult *res, gpointer user_data) {
     GtkFileDialog *dialog = GTK_FILE_DIALOG(source_object);
@@ -857,28 +872,4 @@ static void activate(GtkApplication *app, gpointer user_data) {
     refresh_tabs();
 
     gtk_window_present(GTK_WINDOW(window));
-}
-
-int main(int argc, char *argv[]) {
-    time_t t = time(NULL);
-    struct tm *tm = localtime(&t);
-    dt.year = tm->tm_year + 1900;
-    dt.month = tm->tm_mon + 1;
-    dt.day = tm->tm_mday;
-    dt.hour = 0;
-    dt.minute = 0;
-    dt.second = 0;
-    dt.timezone_offset = -10.0;
-
-    GtkApplication *app;
-    int status;
-
-    app = gtk_application_new("org.example.nightsky", G_APPLICATION_DEFAULT_FLAGS);
-    g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
-    status = g_application_run(G_APPLICATION(app), argc, argv);
-    g_object_unref(app);
-
-    target_list_cleanup();
-    free_catalog();
-    return status;
 }
