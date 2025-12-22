@@ -511,6 +511,49 @@ static void on_toggle_auto_star_settings(GtkCheckButton *source, gpointer user_d
     sky_view_redraw();
 }
 
+static void on_stars_increase(GtkButton *btn, gpointer user_data) {
+    // More stars = Higher Magnitude limit
+    if (sky_options.auto_star_settings) return;
+    sky_options.star_mag_limit += 0.5;
+    if (range_mag) gtk_range_set_value(range_mag, sky_options.star_mag_limit);
+    sky_view_redraw();
+}
+
+static void on_stars_decrease(GtkButton *btn, gpointer user_data) {
+    if (sky_options.auto_star_settings) return;
+    sky_options.star_mag_limit -= 0.5;
+    if (range_mag) gtk_range_set_value(range_mag, sky_options.star_mag_limit);
+    sky_view_redraw();
+}
+
+static void on_stars_brighter(GtkButton *btn, gpointer user_data) {
+    if (sky_options.auto_star_settings) return;
+    sky_options.star_size_m0 += 0.5;
+    if (range_m0) gtk_range_set_value(range_m0, sky_options.star_size_m0);
+    sky_view_redraw();
+}
+
+static void on_stars_dimmer(GtkButton *btn, gpointer user_data) {
+    if (sky_options.auto_star_settings) return;
+    sky_options.star_size_m0 -= 0.5;
+    if (range_m0) gtk_range_set_value(range_m0, sky_options.star_size_m0);
+    sky_view_redraw();
+}
+
+static void on_stars_reset(GtkButton *btn, gpointer user_data) {
+    // Defaults
+    sky_options.star_mag_limit = 8.0;
+    sky_options.star_size_m0 = 7.0;
+    sky_options.star_size_ma = 0.4;
+
+    // Update UI
+    if (range_mag) gtk_range_set_value(range_mag, sky_options.star_mag_limit);
+    if (range_m0) gtk_range_set_value(range_m0, sky_options.star_size_m0);
+    if (range_ma) gtk_range_set_value(range_ma, sky_options.star_size_ma);
+
+    sky_view_redraw();
+}
+
 static void on_site_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
     GtkDropDown *dropdown = GTK_DROP_DOWN(object);
     guint selected = gtk_drop_down_get_selected(dropdown);
@@ -763,6 +806,30 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_auto), sky_options.auto_star_settings);
     g_signal_connect(cb_auto, "toggled", G_CALLBACK(on_toggle_auto_star_settings), NULL);
     gtk_box_append(GTK_BOX(star_box), cb_auto);
+
+    // Star Controls Toolbar (Quick Actions)
+    GtkWidget *star_btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_append(GTK_BOX(star_box), star_btn_box);
+
+    GtkWidget *btn_more_stars = gtk_button_new_with_label("More Stars");
+    g_signal_connect(btn_more_stars, "clicked", G_CALLBACK(on_stars_increase), NULL);
+    gtk_box_append(GTK_BOX(star_btn_box), btn_more_stars);
+
+    GtkWidget *btn_less_stars = gtk_button_new_with_label("Less Stars");
+    g_signal_connect(btn_less_stars, "clicked", G_CALLBACK(on_stars_decrease), NULL);
+    gtk_box_append(GTK_BOX(star_btn_box), btn_less_stars);
+
+    GtkWidget *btn_brighter = gtk_button_new_with_label("Brighter");
+    g_signal_connect(btn_brighter, "clicked", G_CALLBACK(on_stars_brighter), NULL);
+    gtk_box_append(GTK_BOX(star_btn_box), btn_brighter);
+
+    GtkWidget *btn_dimmer = gtk_button_new_with_label("Dimmer");
+    g_signal_connect(btn_dimmer, "clicked", G_CALLBACK(on_stars_dimmer), NULL);
+    gtk_box_append(GTK_BOX(star_btn_box), btn_dimmer);
+
+    GtkWidget *btn_star_reset = gtk_button_new_with_label("Reset");
+    g_signal_connect(btn_star_reset, "clicked", G_CALLBACK(on_stars_reset), NULL);
+    gtk_box_append(GTK_BOX(star_btn_box), btn_star_reset);
 
     // Mag Limit
     gtk_box_append(GTK_BOX(star_box), gtk_label_new("Mag Limit:"));

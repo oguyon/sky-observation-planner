@@ -360,15 +360,21 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
     cairo_clip(cr);
 
     // Grids
+    double alt_step = 10;
+    double az_step = 45;
+    if (view_zoom > 2.0) { alt_step = 5; az_step = 15; }
+    if (view_zoom > 5.0) { alt_step = 2; az_step = 5; }
+    if (view_zoom > 15.0) { alt_step = 1; az_step = 1; }
+
     if (current_options->show_alt_az_grid) {
         cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.8);
         cairo_set_line_width(cr, 1.0);
 
-        // Altitude Circles (Generic Projection)
-        for (int alt = 10; alt < 90; alt += 10) {
+        // Altitude Circles
+        for (double alt = alt_step; alt < 90; alt += alt_step) {
             int first = 1;
             cairo_new_path(cr);
-            for (int az = 0; az <= 360; az += 5) {
+            for (int az = 0; az <= 360; az += 2) { // finer plotting step
                 double u, v, tx, ty;
                 if (project(alt, az, &u, &v)) {
                     transform_point(u, v, &tx, &ty);
@@ -385,19 +391,26 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             cairo_stroke(cr);
 
             // Label
-            if (alt % 30 == 0) {
-                 char buf[10]; sprintf(buf, "%d", alt);
-                 double u, v;
-                 if (project(alt, 180, &u, &v)) {
-                     double tx, ty; transform_point(u, v, &tx, &ty);
-                     cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
-                     cairo_show_text(cr, buf);
+            if ((int)alt % 10 == 0) { // Label every 10 deg still? Or match step?
+                 // Simple logic: if step < 10, label multiples of 10. If step >= 10, label multiples of step.
+                 int label_it = 0;
+                 if (alt_step >= 10 && (int)alt % (int)alt_step == 0) label_it = 1;
+                 else if ((int)alt % 10 == 0) label_it = 1;
+
+                 if (label_it) {
+                     char buf[10]; sprintf(buf, "%d", (int)alt);
+                     double u, v;
+                     if (project(alt, 180, &u, &v)) {
+                         double tx, ty; transform_point(u, v, &tx, &ty);
+                         cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
+                         cairo_show_text(cr, buf);
+                     }
                  }
             }
         }
 
-        // Azimuth Lines (Generic Projection)
-        for (int az = 0; az < 360; az += 45) {
+        // Azimuth Lines
+        for (int az = 0; az < 360; az += az_step) {
             int first = 1;
             cairo_new_path(cr);
             // From Horizon (0) to Zenith (90)
@@ -419,12 +432,18 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         }
     }
 
+    double dec_step = 20;
+    double ra_step = 2; // hours
+    if (view_zoom > 2.0) { dec_step = 10; ra_step = 1; }
+    if (view_zoom > 5.0) { dec_step = 5; ra_step = 0.5; } // 30 min
+    if (view_zoom > 15.0) { dec_step = 1; ra_step = 0.1666; } // 10 min
+
     if (current_options->show_ra_dec_grid) {
         cairo_set_source_rgba(cr, 0.3, 0.3, 0.8, 0.8);
         cairo_set_line_width(cr, 1.0);
-        for (int dec = -60; dec <= 80; dec += 20) {
+        for (double dec = -80; dec <= 80; dec += dec_step) {
             int first = 1;
-            for (int ra = 0; ra <= 360; ra += 5) {
+            for (int ra = 0; ra <= 360; ra += 2) { // plotting resolution
                 double alt, az, u, v, tx, ty;
                 get_horizontal_coordinates(ra, dec, *current_loc, *current_dt, &alt, &az);
                 if (project(alt, az, &u, &v)) {
@@ -435,9 +454,9 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             }
             cairo_stroke(cr);
         }
-        for (int ra_h = 0; ra_h < 24; ra_h += 2) {
+        for (double ra_h = 0; ra_h < 24; ra_h += ra_step) {
             int first = 1;
-            for (int dec = -90; dec <= 90; dec += 5) {
+            for (int dec = -90; dec <= 90; dec += 2) {
                 double alt, az, u, v, tx, ty;
                 get_horizontal_coordinates(ra_h * 15.0, dec, *current_loc, *current_dt, &alt, &az);
                 if (project(alt, az, &u, &v)) {
