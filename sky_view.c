@@ -607,7 +607,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             double jd_step = current_jd + t / 24.0;
             struct ln_date date;
             ln_get_date(jd_step, &date);
-            DateTime dt_step = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, current_dt->timezone_offset};
+            // date contains UT components, so timezone_offset must be 0 for correct re-conversion to JD
+            DateTime dt_step = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, 0.0};
 
             double alt, az;
             get_horizontal_coordinates(highlighted_target->ra, highlighted_target->dec, *current_loc, dt_step, &alt, &az);
@@ -636,7 +637,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             double jd_step = current_jd + h / 24.0;
             struct ln_date date;
             ln_get_date(jd_step, &date);
-            DateTime dt_step = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, current_dt->timezone_offset};
+            // date contains UT components, so timezone_offset must be 0
+            DateTime dt_step = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, 0.0};
 
             double alt, az;
             get_horizontal_coordinates(highlighted_target->ra, highlighted_target->dec, *current_loc, dt_step, &alt, &az);
