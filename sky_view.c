@@ -595,6 +595,66 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         }
     }
 
+    if (highlighted_target) {
+        cairo_set_source_rgba(cr, 0.6, 0.6, 0.6, 0.8);
+        cairo_set_line_width(cr, 3.0);
+
+        double current_jd = get_julian_day(*current_dt);
+        int first_pt = 1;
+
+        // Draw path for +/- 6 hours
+        for (double t = -6.0; t <= 6.0; t += 0.1) {
+            double jd_step = current_jd + t / 24.0;
+            struct ln_date date;
+            ln_get_date(jd_step, &date);
+            DateTime dt_step = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, current_dt->timezone_offset};
+
+            double alt, az;
+            get_horizontal_coordinates(highlighted_target->ra, highlighted_target->dec, *current_loc, dt_step, &alt, &az);
+
+            double u, v, tx, ty;
+            if (project(alt, az, &u, &v)) {
+                transform_point(u, v, &tx, &ty);
+                if (first_pt) {
+                    cairo_move_to(cr, cx + tx * radius, cy + ty * radius);
+                    first_pt = 0;
+                } else {
+                    cairo_line_to(cr, cx + tx * radius, cy + ty * radius);
+                }
+            } else {
+                first_pt = 1;
+            }
+        }
+        cairo_stroke(cr);
+
+        // Draw markers
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        cairo_set_line_width(cr, 1.0);
+
+        for (int h = -6; h <= 6; h++) {
+            if (h == 0) continue;
+            double jd_step = current_jd + h / 24.0;
+            struct ln_date date;
+            ln_get_date(jd_step, &date);
+            DateTime dt_step = {date.years, date.months, date.days, date.hours, date.minutes, date.seconds, current_dt->timezone_offset};
+
+            double alt, az;
+            get_horizontal_coordinates(highlighted_target->ra, highlighted_target->dec, *current_loc, dt_step, &alt, &az);
+
+            double u, v, tx, ty;
+            if (project(alt, az, &u, &v)) {
+                transform_point(u, v, &tx, &ty);
+                cairo_arc(cr, cx + tx * radius, cy + ty * radius, 3, 0, 2*M_PI);
+                cairo_fill(cr);
+
+                char label[16];
+                snprintf(label, 16, "%+dh", h);
+                cairo_move_to(cr, cx + tx * radius + 5, cy + ty * radius - 5);
+                cairo_show_text(cr, label);
+            }
+        }
+    }
+
     double s_alt, s_az, u, v, tx, ty;
     get_sun_position(*current_loc, *current_dt, &s_alt, &s_az);
     if (project(s_alt, s_az, &u, &v)) {
