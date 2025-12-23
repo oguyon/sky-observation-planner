@@ -515,12 +515,19 @@ static void on_plot_mode_toggled(GtkCheckButton *btn, gpointer user_data) {
 static TargetList *dlg_target_list;
 
 static void on_add_target_clicked(GtkButton *btn, gpointer user_data) {
+    printf("[DEBUG] on_add_target_clicked: Entry. Selected index=%d, Count=%d\n", selected_candidate_index, candidate_count);
     if (selected_candidate_index >= 0 && selected_candidate_index < candidate_count) {
         if (dlg_target_list) {
+            printf("[DEBUG] on_add_target_clicked: Adding target to list %p\n", dlg_target_list);
             target_list_add_target(dlg_target_list, candidates[selected_candidate_index].name, candidates[selected_candidate_index].ra, candidates[selected_candidate_index].dec, candidates[selected_candidate_index].mag, candidates[selected_candidate_index].bv);
+            printf("[DEBUG] on_add_target_clicked: Triggering redraws\n");
             sky_view_redraw();
             elevation_view_redraw();
+        } else {
+            printf("[DEBUG] on_add_target_clicked: No target list selected!\n");
         }
+    } else {
+        printf("[DEBUG] on_add_target_clicked: Invalid selection!\n");
     }
 }
 
