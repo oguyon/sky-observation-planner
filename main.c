@@ -171,9 +171,11 @@ static void on_target_list_changed() {
                 int cnt = target_list_get_count(tl);
                 for (int k=0; k<cnt; k++) {
                     Target *t = target_list_get_target(tl, k);
-                    TargetObject *obj = target_object_new(t->name, t->ra, t->dec, t->mag, t->bv);
-                    g_list_store_append(store, obj);
-                    g_object_unref(obj);
+                    if (t) {
+                        TargetObject *obj = target_object_new(t->name, t->ra, t->dec, t->mag, t->bv);
+                        g_list_store_append(store, obj);
+                        g_object_unref(obj);
+                    }
                 }
 
                 GtkSorter *sorter = gtk_column_view_get_sorter(GTK_COLUMN_VIEW(col_view));
