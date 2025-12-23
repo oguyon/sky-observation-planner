@@ -168,6 +168,8 @@ static void on_target_list_changed() {
 
             if (GTK_IS_COLUMN_VIEW(col_view)) {
                 GListStore *store = g_list_store_new(TYPE_TARGET_OBJECT);
+                if (!store) continue;
+
                 int cnt = target_list_get_count(tl);
                 for (int k=0; k<cnt; k++) {
                     Target *t = target_list_get_target(tl, k);
