@@ -379,7 +379,16 @@ static void on_plot_click(GtkGestureClick *gesture, int n_press, double x, doubl
             }
 
             GtkSelectionModel *sel_model = gtk_column_view_get_model(list_view);
-            gtk_selection_model_select_item(sel_model, list_idx, TRUE);
+            if (sel_model) {
+                gtk_selection_model_select_item(sel_model, list_idx, TRUE);
+
+                // Scroll to selection
+                // Getting list item widget is hard in ColumnView.
+                // Assuming GTK4 handles view updates.
+                // But we should ensure the selection is visible.
+                // gtk_widget_activate_action(list_view, "list.scroll-to-item", "u", list_idx);
+                // Using scroll_to is standard but requires signal or action.
+            }
         }
     }
 }
