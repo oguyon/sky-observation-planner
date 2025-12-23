@@ -103,6 +103,7 @@ int target_list_get_count(TargetList *list) {
 
 Target *target_list_get_target(TargetList *list, int index) {
     if (!list || index < 0 || index >= list->count) return NULL;
+    if (!list->targets) return NULL;
     return list->targets[index];
 }
 
