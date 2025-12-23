@@ -183,7 +183,9 @@ static void on_target_list_changed() {
 
                 int cnt = target_list_get_count(tl);
 
-                if (store) {
+                int reuse_store = (store != NULL);
+
+                if (reuse_store) {
                     // Reuse existing store: clear it first
                     g_list_store_splice(store, 0, g_list_model_get_n_items(G_LIST_MODEL(store)), NULL, 0);
                 } else {
@@ -200,7 +202,7 @@ static void on_target_list_changed() {
                     }
                 }
 
-                if (!sel_model) {
+                if (!reuse_store) {
                     GtkSorter *sorter = gtk_column_view_get_sorter(GTK_COLUMN_VIEW(col_view));
                     g_object_ref(sorter);
                     GtkSortListModel *sort_model = gtk_sort_list_model_new(G_LIST_MODEL(store), sorter);
