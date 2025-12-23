@@ -108,27 +108,20 @@ Target *target_list_get_target(TargetList *list, int index) {
 }
 
 void target_list_add_target(TargetList *list, const char *name, double ra, double dec, double mag, double bv) {
-    printf("[DEBUG] target_list_add_target: Entry. List=%p, Name=%s, Count=%d, Cap=%d\n", list, name, list ? list->count : -1, list ? list->capacity : -1);
     if (!list) return;
     if (list->count == list->capacity) {
         int new_capacity = list->capacity == 0 ? 4 : list->capacity * 2;
-        printf("[DEBUG] target_list_add_target: Reallocating to capacity %d\n", new_capacity);
         Target **new_targets = realloc(list->targets, new_capacity * sizeof(Target*));
-        if (!new_targets) {
-            printf("[DEBUG] target_list_add_target: Realloc failed!\n");
-            return; // Allocation failed
-        }
+        if (!new_targets) return; // Allocation failed
         list->targets = new_targets;
         list->capacity = new_capacity;
     }
 
     // Defensive check
     if (list->count >= list->capacity) {
-        printf("[DEBUG] target_list_add_target: Count >= Capacity check failed! %d >= %d\n", list->count, list->capacity);
         return;
     }
 
-    printf("[DEBUG] target_list_add_target: Mallocing new target at index %d\n", list->count);
     list->targets[list->count] = malloc(sizeof(Target));
     if (list->targets[list->count]) {
         // Zero init for safety
@@ -146,10 +139,7 @@ void target_list_add_target(TargetList *list, const char *name, double ra, doubl
         list->targets[list->count]->bv = bv;
 
         list->count++;
-        printf("[DEBUG] target_list_add_target: Added. New count=%d. Notifying change.\n", list->count);
         notify_change();
-    } else {
-        printf("[DEBUG] target_list_add_target: Malloc failed for target!\n");
     }
 }
 

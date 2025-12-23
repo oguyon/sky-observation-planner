@@ -1281,7 +1281,6 @@ GtkWidget *create_sky_view(Location *loc, DateTime *dt, SkyViewOptions *options,
 
 void sky_view_redraw() {
     if (drawing_area) {
-        // printf("[DEBUG] sky_view_redraw: Queuing draw.\n");
         gtk_widget_queue_draw(drawing_area);
     }
 }
