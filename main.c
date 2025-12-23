@@ -144,7 +144,6 @@ static void on_target_selection_changed(GtkSelectionModel *model, guint position
 
 // Callback from target_list module
 static void on_target_list_changed() {
-    printf("[DEBUG] on_target_list_changed: Entry\n");
     update_all_views();
 
     int pages = gtk_notebook_get_n_pages(target_notebook);
@@ -168,44 +167,52 @@ static void on_target_list_changed() {
             GtkWidget *col_view = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(sc));
 
             if (GTK_IS_COLUMN_VIEW(col_view)) {
-                printf("[DEBUG] on_target_list_changed: Updating view for list %p. Creating new store.\n", tl);
-                GListStore *store = g_list_store_new(TYPE_TARGET_OBJECT);
-                if (!store) continue;
+                GListStore *store = NULL;
+                GtkSelectionModel *sel_model = gtk_column_view_get_model(GTK_COLUMN_VIEW(col_view));
+
+                // Try to retrieve existing store to reuse it
+                if (sel_model && GTK_IS_SINGLE_SELECTION(sel_model)) {
+                    GListModel *sort_model = gtk_single_selection_get_model(GTK_SINGLE_SELECTION(sel_model));
+                    if (sort_model && GTK_IS_SORT_LIST_MODEL(sort_model)) {
+                        GListModel *inner = gtk_sort_list_model_get_model(GTK_SORT_LIST_MODEL(sort_model));
+                        if (inner && G_IS_LIST_STORE(inner)) {
+                            store = G_LIST_STORE(inner);
+                        }
+                    }
+                }
 
                 int cnt = target_list_get_count(tl);
-                printf("[DEBUG] on_target_list_changed: List count: %d\n", cnt);
+
+                if (store) {
+                    // Reuse existing store: clear it first
+                    g_list_store_splice(store, 0, g_list_model_get_n_items(G_LIST_MODEL(store)), NULL, 0);
+                } else {
+                    // Create new store if none exists
+                    store = g_list_store_new(TYPE_TARGET_OBJECT);
+                }
+
                 for (int k=0; k<cnt; k++) {
                     Target *t = target_list_get_target(tl, k);
                     if (t) {
                         TargetObject *obj = target_object_new(t->name, t->ra, t->dec, t->mag, t->bv);
                         g_list_store_append(store, obj);
                         g_object_unref(obj);
-                    } else {
-                        printf("[DEBUG] on_target_list_changed: NULL target at index %d!\n", k);
                     }
                 }
 
-                GtkSorter *sorter = gtk_column_view_get_sorter(GTK_COLUMN_VIEW(col_view));
-                // sort_model takes ownership of store (Transfer Full)
-                GtkSortListModel *sort_model = gtk_sort_list_model_new(G_LIST_MODEL(store), sorter);
-
-                // sel takes ownership of sort_model (Transfer Full)
-                GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(sort_model));
-                gtk_single_selection_set_autoselect(sel, FALSE);
-
-                g_signal_connect(sel, "selection-changed", G_CALLBACK(on_target_selection_changed), NULL);
-
-                printf("[DEBUG] on_target_list_changed: Setting new model on column view.\n");
-                // set_model adds a reference (Transfer None)
-                gtk_column_view_set_model(GTK_COLUMN_VIEW(col_view), GTK_SELECTION_MODEL(sel));
-
-                // We release our local reference to sel. store and sort_model are owned by the chain.
-                g_object_unref(sel);
-                printf("[DEBUG] on_target_list_changed: Model set complete.\n");
+                if (!sel_model) {
+                    GtkSorter *sorter = gtk_column_view_get_sorter(GTK_COLUMN_VIEW(col_view));
+                    g_object_ref(sorter);
+                    GtkSortListModel *sort_model = gtk_sort_list_model_new(G_LIST_MODEL(store), sorter);
+                    GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(sort_model));
+                    gtk_single_selection_set_autoselect(sel, FALSE);
+                    g_signal_connect(sel, "selection-changed", G_CALLBACK(on_target_selection_changed), NULL);
+                    gtk_column_view_set_model(GTK_COLUMN_VIEW(col_view), GTK_SELECTION_MODEL(sel));
+                    g_object_unref(sel);
+                }
             }
         }
     }
-    printf("[DEBUG] on_target_list_changed: Exit\n");
 }
 
 // Column Bind Functions
@@ -327,7 +334,6 @@ static void on_time_selected_from_plot(DateTime new_dt) {
 
 // Helper to create a view for a list
 static GtkWidget *create_view_for_list(TargetList *list) {
-    printf("[DEBUG] create_view_for_list: Entry for list %p\n", list);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     g_object_set_data(G_OBJECT(box), "target_list", list); // Store reference
 
