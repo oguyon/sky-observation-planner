@@ -116,13 +116,23 @@ void target_list_add_target(TargetList *list, const char *name, double ra, doubl
         list->capacity = new_capacity;
     }
 
+    // Defensive check
+    if (list->count >= list->capacity) {
+        // Should not happen if realloc logic is correct
+        return;
+    }
+
     list->targets[list->count] = malloc(sizeof(Target));
     if (list->targets[list->count]) {
         // Zero init for safety
         memset(list->targets[list->count], 0, sizeof(Target));
 
-        strncpy(list->targets[list->count]->name, name, 63);
-        list->targets[list->count]->name[63] = '\0';
+        if (name) {
+            strncpy(list->targets[list->count]->name, name, 63);
+            list->targets[list->count]->name[63] = '\0';
+        } else {
+            strcpy(list->targets[list->count]->name, "Unknown");
+        }
         list->targets[list->count]->ra = ra;
         list->targets[list->count]->dec = dec;
         list->targets[list->count]->mag = mag;
