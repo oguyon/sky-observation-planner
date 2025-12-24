@@ -1034,24 +1034,6 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_sensitive(GTK_WIDGET(range_m0), !sky_options.auto_star_settings);
     gtk_widget_set_sensitive(GTK_WIDGET(range_ma), !sky_options.auto_star_settings);
 
-    // Targets Menu (List Actions)
-    GtkWidget *mb_targets = gtk_menu_button_new();
-    gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_targets), "Targets");
-    GtkWidget *pop_targets = gtk_popover_new();
-    gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb_targets), pop_targets);
-    gtk_box_append(GTK_BOX(toolbar), mb_targets);
-
-    GtkWidget *box_targets = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_popover_set_child(GTK_POPOVER(pop_targets), box_targets);
-
-    btn = gtk_button_new_with_label("New List"); g_signal_connect(btn, "clicked", G_CALLBACK(on_new_list_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
-    btn = gtk_button_new_with_label("Save List"); g_signal_connect(btn, "clicked", G_CALLBACK(on_save_list_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
-    btn = gtk_button_new_with_label("Load List"); g_signal_connect(btn, "clicked", G_CALLBACK(on_load_list_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
-    btn = gtk_button_new_with_label("Copy Target"); g_signal_connect(btn, "clicked", G_CALLBACK(on_copy_targets_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
-    btn = gtk_button_new_with_label("Paste Target"); g_signal_connect(btn, "clicked", G_CALLBACK(on_paste_targets_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
-    btn = gtk_button_new_with_label("Delete Selected"); g_signal_connect(btn, "clicked", G_CALLBACK(on_delete_target_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
-    btn = gtk_button_new_with_label("Clear Selection"); g_signal_connect(btn, "clicked", G_CALLBACK(on_clear_selection_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
-
     // Settings Menu
     GtkWidget *mb_settings = gtk_menu_button_new();
     gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_settings), "Settings");
@@ -1108,10 +1090,29 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     // Bottom Right: Targets
     GtkWidget *targets_frame = gtk_frame_new("Targets");
+
+    GtkWidget *targets_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_frame_set_child(GTK_FRAME(targets_frame), targets_vbox);
+
+    GtkWidget *targets_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_widget_set_margin_start(targets_toolbar, 5);
+    gtk_widget_set_margin_end(targets_toolbar, 5);
+    gtk_widget_set_margin_top(targets_toolbar, 5);
+    gtk_box_append(GTK_BOX(targets_vbox), targets_toolbar);
+
+    GtkWidget *btn_nl = gtk_button_new_with_label("New List"); g_signal_connect(btn_nl, "clicked", G_CALLBACK(on_new_list_clicked), NULL); gtk_box_append(GTK_BOX(targets_toolbar), btn_nl);
+    GtkWidget *btn_sl = gtk_button_new_with_label("Save"); g_signal_connect(btn_sl, "clicked", G_CALLBACK(on_save_list_clicked), NULL); gtk_box_append(GTK_BOX(targets_toolbar), btn_sl);
+    GtkWidget *btn_ll = gtk_button_new_with_label("Load"); g_signal_connect(btn_ll, "clicked", G_CALLBACK(on_load_list_clicked), NULL); gtk_box_append(GTK_BOX(targets_toolbar), btn_ll);
+    GtkWidget *btn_cp = gtk_button_new_with_label("Copy"); g_signal_connect(btn_cp, "clicked", G_CALLBACK(on_copy_targets_clicked), NULL); gtk_box_append(GTK_BOX(targets_toolbar), btn_cp);
+    GtkWidget *btn_ps = gtk_button_new_with_label("Paste"); g_signal_connect(btn_ps, "clicked", G_CALLBACK(on_paste_targets_clicked), NULL); gtk_box_append(GTK_BOX(targets_toolbar), btn_ps);
+    GtkWidget *btn_del = gtk_button_new_with_label("Delete"); g_signal_connect(btn_del, "clicked", G_CALLBACK(on_delete_target_clicked), NULL); gtk_box_append(GTK_BOX(targets_toolbar), btn_del);
+    GtkWidget *btn_clr = gtk_button_new_with_label("Clear"); g_signal_connect(btn_clr, "clicked", G_CALLBACK(on_clear_selection_clicked), NULL); gtk_box_append(GTK_BOX(targets_toolbar), btn_clr);
+
     target_notebook = GTK_NOTEBOOK(gtk_notebook_new());
     gtk_notebook_set_tab_pos(target_notebook, GTK_POS_TOP);
     g_signal_connect(target_notebook, "switch-page", G_CALLBACK(on_notebook_switch_page), NULL);
-    gtk_frame_set_child(GTK_FRAME(targets_frame), GTK_WIDGET(target_notebook));
+    gtk_widget_set_vexpand(GTK_WIDGET(target_notebook), TRUE);
+    gtk_box_append(GTK_BOX(targets_vbox), GTK_WIDGET(target_notebook));
 
     gtk_paned_set_end_child(GTK_PANED(right_paned), targets_frame);
     gtk_paned_set_resize_end_child(GTK_PANED(right_paned), TRUE);
