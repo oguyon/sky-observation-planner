@@ -56,11 +56,11 @@ static GtkNotebook *target_notebook = NULL;
 static TargetList *active_target_list = NULL;
 
 // UI Widgets for Star Settings
-static GtkLabel *lbl_site_info = NULL;
 static GtkRange *range_mag = NULL;
 static GtkRange *range_m0 = NULL;
 static GtkRange *range_ma = NULL;
 static GtkRange *range_sat = NULL;
+static GtkButton *btn_date_main = NULL;
 
 // TargetObject Definition for ListModel
 #define TYPE_TARGET_OBJECT (target_object_get_type())
@@ -804,19 +804,11 @@ static void on_site_changed(GObject *object, GParamSpec *pspec, gpointer user_da
         loc.lon = sites[selected].lon;
         loc.elevation = sites[selected].elevation;
         dt.timezone_offset = sites[selected].timezone_offset;
-
-        if (lbl_site_info) {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "Lat: %.4f  Lon: %.4f  Elev: %.0fm", loc.lat, loc.lon, loc.elevation);
-            gtk_label_set_text(lbl_site_info, buf);
-        }
-
         update_all_views();
     }
 }
 
 static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
-    GtkLabel *label = GTK_LABEL(user_data);
     GDateTime *date = gtk_calendar_get_date(calendar);
     if (date) {
         dt.year = g_date_time_get_year(date);
@@ -826,9 +818,11 @@ static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
         dt.minute = 0;
         dt.second = 0;
 
-        char *date_str = g_date_time_format(date, "%Y-%m-%d");
-        gtk_label_set_text(label, date_str);
-        g_free(date_str);
+        if (btn_date_main) {
+            char *date_str = g_date_time_format(date, "%Y-%m-%d");
+            gtk_button_set_label(btn_date_main, date_str);
+            g_free(date_str);
+        }
 
         g_date_time_unref(date);
         update_all_views();
@@ -881,73 +875,25 @@ static void activate(GtkApplication *app, gpointer user_data) {
     target_list_init();
     active_target_list = target_list_create("Default");
 
-    // Register callback
     target_list_set_change_callback(on_target_list_changed);
 
     GtkWidget *window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Night Sky Tool");
-    gtk_window_set_default_size(GTK_WINDOW(window), 1000, 700);
+    gtk_window_set_default_size(GTK_WINDOW(window), 1200, 800);
 
-    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_window_set_child(GTK_WINDOW(window), paned);
+    GtkWidget *vbox_root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(GTK_WINDOW(window), vbox_root);
 
-    // Left Panel: Sky View
-    GtkWidget *sky_area = create_sky_view(&loc, &dt, &sky_options, on_sky_click);
-    gtk_widget_set_size_request(sky_area, 500, 500);
-    gtk_paned_set_start_child(GTK_PANED(paned), sky_area);
-    gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
-    gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
-
-    // Right Panel: Split Vertical (Elevation Top, Bottom Area)
-    // We want the divider to be draggable between Sky View and (Elevation + Controls).
-    // That's what we did with paned.
-    // Now, inside the Right Panel, we have Elevation on top and Controls/Lists on bottom.
-    // The user requested: "Make the delimiter between control panel and target list draggable/movable."
-    // Ah, wait. "Left panel: full night sky view... Right panel: Elevation..."
-    // "Make the delimiter between control panel and target list draggable/movable."
-    // Originally, Elevation was Top Right, and Bottom Right was split horizontally into Controls (Left) and Target List (Right).
-    // If the delimiter between Control Panel and Target List should be draggable, then the Bottom Right container should be a GtkPaned (Horizontal).
-
-    GtkWidget *right_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    gtk_paned_set_end_child(GTK_PANED(paned), right_box);
-    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
-    gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
-
-    // Elevation Area (Top Half)
-    GtkWidget *status_label = gtk_label_new("Hover over graph");
-    GtkWidget *elev_area = create_elevation_view(&loc, &dt, GTK_LABEL(status_label), on_time_selected_from_plot, on_elevation_hover);
-
-    gtk_widget_set_vexpand(elev_area, TRUE);
-    gtk_widget_set_hexpand(elev_area, TRUE);
-    gtk_box_append(GTK_BOX(right_box), gtk_label_new("Elevation (Midnight +/- 8h)"));
-    gtk_box_append(GTK_BOX(right_box), elev_area);
-
-    // Bottom Area: Split Horizontal (Controls Left, Target List Right)
-    // Using GtkPaned here for draggability.
-    GtkWidget *bottom_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_widget_set_vexpand(bottom_paned, TRUE);
-    gtk_box_append(GTK_BOX(right_box), bottom_paned);
-
-    // Controls Frame (Left Side of Bottom)
-    GtkWidget *controls_frame = gtk_frame_new("Controls");
-    gtk_widget_set_hexpand(controls_frame, FALSE); // Don't greedily expand, let paned decide
-    gtk_paned_set_start_child(GTK_PANED(bottom_paned), controls_frame);
-    gtk_paned_set_resize_start_child(GTK_PANED(bottom_paned), FALSE); // Controls usually fixed size? Or allow resize. Allow.
-
-    GtkWidget *controls_scroll = gtk_scrolled_window_new();
-    gtk_frame_set_child(GTK_FRAME(controls_frame), controls_scroll);
-
-    GtkWidget *controls_grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(controls_grid), 10);
-    gtk_grid_set_column_spacing(GTK_GRID(controls_grid), 10);
-    gtk_widget_set_margin_top(controls_grid, 10);
-    gtk_widget_set_margin_bottom(controls_grid, 10);
-    gtk_widget_set_margin_start(controls_grid, 10);
-    gtk_widget_set_margin_end(controls_grid, 10);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(controls_scroll), controls_grid);
+    // Toolbar
+    GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_widget_set_margin_start(toolbar, 5);
+    gtk_widget_set_margin_end(toolbar, 5);
+    gtk_widget_set_margin_top(toolbar, 5);
+    gtk_widget_set_margin_bottom(toolbar, 5);
+    gtk_box_append(GTK_BOX(vbox_root), toolbar);
 
     // Site Dropdown
-    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Site:"), 0, 0, 1, 1);
+    gtk_box_append(GTK_BOX(toolbar), gtk_label_new("Site:"));
     GtkStringList *site_list = gtk_string_list_new(NULL);
     for (int i = 0; sites[i].name != NULL; i++) {
         gtk_string_list_append(site_list, sites[i].name);
@@ -955,236 +901,220 @@ static void activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *dropdown_site = gtk_drop_down_new(G_LIST_MODEL(site_list), NULL);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown_site), 0);
     g_signal_connect(dropdown_site, "notify::selected", G_CALLBACK(on_site_changed), NULL);
-    gtk_grid_attach(GTK_GRID(controls_grid), dropdown_site, 1, 0, 1, 1);
+    gtk_box_append(GTK_BOX(toolbar), dropdown_site);
 
-    // Site Info Label
-    char site_info_buf[128];
-    snprintf(site_info_buf, sizeof(site_info_buf), "Lat: %.4f  Lon: %.4f  Elev: %.0fm", loc.lat, loc.lon, loc.elevation);
-    lbl_site_info = GTK_LABEL(gtk_label_new(site_info_buf));
-    gtk_widget_set_halign(GTK_WIDGET(lbl_site_info), GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(controls_grid), GTK_WIDGET(lbl_site_info), 0, 1, 2, 1);
-
-
-    // Date Control
-    gtk_grid_attach(GTK_GRID(controls_grid), gtk_label_new("Date:"), 0, 2, 1, 1);
-    GtkWidget *date_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    // Date Button
     char date_buf[32];
     sprintf(date_buf, "%04d-%02d-%02d", dt.year, dt.month, dt.day);
-    GtkWidget *lbl_date_value = gtk_label_new(date_buf);
-    GtkWidget *cal_button = gtk_menu_button_new();
-    gtk_menu_button_set_label(GTK_MENU_BUTTON(cal_button), "Select");
-    gtk_box_append(GTK_BOX(date_box), lbl_date_value);
-    gtk_box_append(GTK_BOX(date_box), cal_button);
-
-    GtkWidget *popover = gtk_popover_new();
+    btn_date_main = GTK_BUTTON(gtk_button_new_with_label(date_buf));
+    GtkWidget *popover_cal = gtk_popover_new();
     GtkWidget *calendar = gtk_calendar_new();
-    g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), lbl_date_value);
-    gtk_popover_set_child(GTK_POPOVER(popover), calendar);
-    gtk_menu_button_set_popover(GTK_MENU_BUTTON(cal_button), popover);
-    gtk_grid_attach(GTK_GRID(controls_grid), date_box, 1, 2, 1, 1);
+    g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), NULL);
+    gtk_popover_set_child(GTK_POPOVER(popover_cal), calendar);
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(btn_date_main), popover_cal); // Button as menu button? No, wrap in MenuButton or use popover on click?
+    // GTK4 Button doesn't have set_popover. MenuButton does.
+    // Replace with MenuButton.
+    GtkWidget *mb_date = gtk_menu_button_new();
+    gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_date), date_buf);
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb_date), popover_cal);
+    btn_date_main = GTK_BUTTON(mb_date); // Store reference to update label (it acts as button)
+    gtk_box_append(GTK_BOX(toolbar), mb_date);
 
-    // Toggles
-    GtkWidget *toggle_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_grid_attach(GTK_GRID(controls_grid), toggle_box, 0, 3, 2, 1);
+    // View Menu
+    GtkWidget *mb_view = gtk_menu_button_new();
+    gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_view), "View");
+    GtkWidget *pop_view = gtk_popover_new();
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb_view), pop_view);
+    gtk_box_append(GTK_BOX(toolbar), mb_view);
 
-    GtkWidget *cb_lines = gtk_check_button_new_with_label("Constellation Lines");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_lines), sky_options.show_constellation_lines);
-    g_signal_connect(cb_lines, "toggled", G_CALLBACK(on_toggle_constellation_lines), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_lines);
+    GtkWidget *box_view = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_margin_start(box_view, 5); gtk_widget_set_margin_end(box_view, 5);
+    gtk_widget_set_margin_top(box_view, 5); gtk_widget_set_margin_bottom(box_view, 5);
+    gtk_popover_set_child(GTK_POPOVER(pop_view), box_view);
 
-    GtkWidget *cb_names = gtk_check_button_new_with_label("Constellation Names");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_names), sky_options.show_constellation_names);
-    g_signal_connect(cb_names, "toggled", G_CALLBACK(on_toggle_constellation_names), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_names);
+    GtkWidget *cb;
+    cb = gtk_check_button_new_with_label("Constellation Lines");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.show_constellation_lines);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_constellation_lines), NULL);
+    gtk_box_append(GTK_BOX(box_view), cb);
 
-    GtkWidget *cb_alt = gtk_check_button_new_with_label("Alt/Az Grid");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_alt), sky_options.show_alt_az_grid);
-    g_signal_connect(cb_alt, "toggled", G_CALLBACK(on_toggle_alt_az), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_alt);
+    cb = gtk_check_button_new_with_label("Constellation Names");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.show_constellation_names);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_constellation_names), NULL);
+    gtk_box_append(GTK_BOX(box_view), cb);
 
-    GtkWidget *cb_ra = gtk_check_button_new_with_label("RA/Dec Grid");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ra), sky_options.show_ra_dec_grid);
-    g_signal_connect(cb_ra, "toggled", G_CALLBACK(on_toggle_ra_dec), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_ra);
+    cb = gtk_check_button_new_with_label("Alt/Az Grid");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.show_alt_az_grid);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_alt_az), NULL);
+    gtk_box_append(GTK_BOX(box_view), cb);
 
-    GtkWidget *cb_planets = gtk_check_button_new_with_label("Planets");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_planets), sky_options.show_planets);
-    g_signal_connect(cb_planets, "toggled", G_CALLBACK(on_toggle_planets), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_planets);
+    cb = gtk_check_button_new_with_label("RA/Dec Grid");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.show_ra_dec_grid);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_ra_dec), NULL);
+    gtk_box_append(GTK_BOX(box_view), cb);
 
-    GtkWidget *cb_moon = gtk_check_button_new_with_label("Moon Circles");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_moon), sky_options.show_moon_circles);
-    g_signal_connect(cb_moon, "toggled", G_CALLBACK(on_toggle_moon_circles), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_moon);
+    cb = gtk_check_button_new_with_label("Planets");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.show_planets);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_planets), NULL);
+    gtk_box_append(GTK_BOX(box_view), cb);
 
-    GtkWidget *cb_ecliptic = gtk_check_button_new_with_label("Ecliptic");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ecliptic), sky_options.show_ecliptic);
-    g_signal_connect(cb_ecliptic, "toggled", G_CALLBACK(on_toggle_ecliptic), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_ecliptic);
+    cb = gtk_check_button_new_with_label("Moon Circles");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.show_moon_circles);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_moon_circles), NULL);
+    gtk_box_append(GTK_BOX(box_view), cb);
 
-    GtkWidget *cb_colors = gtk_check_button_new_with_label("Star Colors");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_colors), sky_options.show_star_colors);
-    g_signal_connect(cb_colors, "toggled", G_CALLBACK(on_toggle_star_colors), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), cb_colors);
+    cb = gtk_check_button_new_with_label("Ecliptic");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.show_ecliptic);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_ecliptic), NULL);
+    gtk_box_append(GTK_BOX(box_view), cb);
 
-    GtkWidget *btn_horizon = gtk_toggle_button_new_with_label("Horizon View");
-    g_signal_connect(btn_horizon, "toggled", G_CALLBACK(sky_view_toggle_projection), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), btn_horizon);
+    cb = gtk_check_button_new_with_label("Star Colors");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.show_star_colors);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_star_colors), NULL);
+    gtk_box_append(GTK_BOX(box_view), cb);
 
-    GtkWidget *btn_reset = gtk_button_new_with_label("Reset View");
-    g_signal_connect(btn_reset, "clicked", G_CALLBACK(sky_view_reset_view), NULL);
-    gtk_box_append(GTK_BOX(toggle_box), btn_reset);
+    GtkWidget *btn_h = gtk_toggle_button_new_with_label("Horizon View");
+    g_signal_connect(btn_h, "toggled", G_CALLBACK(sky_view_toggle_projection), NULL);
+    gtk_box_append(GTK_BOX(box_view), btn_h);
 
-    // Star Settings
-    GtkWidget *star_expander = gtk_expander_new("Star Settings");
-    gtk_grid_attach(GTK_GRID(controls_grid), star_expander, 0, 4, 2, 1);
+    GtkWidget *btn_r = gtk_button_new_with_label("Reset View");
+    g_signal_connect(btn_r, "clicked", G_CALLBACK(sky_view_reset_view), NULL);
+    gtk_box_append(GTK_BOX(box_view), btn_r);
 
-    GtkWidget *star_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_expander_set_child(GTK_EXPANDER(star_expander), star_box);
+    // Stars Menu
+    GtkWidget *mb_stars = gtk_menu_button_new();
+    gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_stars), "Stars");
+    GtkWidget *pop_stars = gtk_popover_new();
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb_stars), pop_stars);
+    gtk_box_append(GTK_BOX(toolbar), mb_stars);
 
-    // Auto Star Settings Toggle
-    GtkWidget *cb_auto = gtk_check_button_new_with_label("Auto Star Settings");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_auto), sky_options.auto_star_settings);
-    g_signal_connect(cb_auto, "toggled", G_CALLBACK(on_toggle_auto_star_settings), NULL);
-    gtk_box_append(GTK_BOX(star_box), cb_auto);
+    GtkWidget *box_stars = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_widget_set_margin_start(box_stars, 5); gtk_widget_set_margin_end(box_stars, 5);
+    gtk_widget_set_margin_top(box_stars, 5); gtk_widget_set_margin_bottom(box_stars, 5);
+    gtk_popover_set_child(GTK_POPOVER(pop_stars), box_stars);
 
-    // Star Controls Toolbar (Quick Actions)
-    GtkWidget *star_btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_box_append(GTK_BOX(star_box), star_btn_box);
+    cb = gtk_check_button_new_with_label("Auto Star Settings");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.auto_star_settings);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_toggle_auto_star_settings), NULL);
+    gtk_box_append(GTK_BOX(box_stars), cb);
 
-    GtkWidget *btn_more_stars = gtk_button_new_with_label("More Stars");
-    g_signal_connect(btn_more_stars, "clicked", G_CALLBACK(on_stars_increase), NULL);
-    gtk_box_append(GTK_BOX(star_btn_box), btn_more_stars);
+    GtkWidget *hbox_sbtn = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_box_append(GTK_BOX(box_stars), hbox_sbtn);
+    GtkWidget *btn;
+    btn = gtk_button_new_with_label("More"); g_signal_connect(btn, "clicked", G_CALLBACK(on_stars_increase), NULL); gtk_box_append(GTK_BOX(hbox_sbtn), btn);
+    btn = gtk_button_new_with_label("Less"); g_signal_connect(btn, "clicked", G_CALLBACK(on_stars_decrease), NULL); gtk_box_append(GTK_BOX(hbox_sbtn), btn);
+    btn = gtk_button_new_with_label("Brighter"); g_signal_connect(btn, "clicked", G_CALLBACK(on_stars_brighter), NULL); gtk_box_append(GTK_BOX(hbox_sbtn), btn);
+    btn = gtk_button_new_with_label("Dimmer"); g_signal_connect(btn, "clicked", G_CALLBACK(on_stars_dimmer), NULL); gtk_box_append(GTK_BOX(hbox_sbtn), btn);
 
-    GtkWidget *btn_less_stars = gtk_button_new_with_label("Less Stars");
-    g_signal_connect(btn_less_stars, "clicked", G_CALLBACK(on_stars_decrease), NULL);
-    gtk_box_append(GTK_BOX(star_btn_box), btn_less_stars);
+    gtk_box_append(GTK_BOX(box_stars), gtk_label_new("Mag Limit:"));
+    range_mag = GTK_RANGE(gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 15.0, 0.1));
+    gtk_scale_set_draw_value(GTK_SCALE(range_mag), TRUE); gtk_range_set_value(range_mag, sky_options.star_mag_limit);
+    g_signal_connect(range_mag, "value-changed", G_CALLBACK(on_mag_limit_changed), NULL);
+    gtk_box_append(GTK_BOX(box_stars), GTK_WIDGET(range_mag));
 
-    GtkWidget *btn_brighter = gtk_button_new_with_label("Brighter");
-    g_signal_connect(btn_brighter, "clicked", G_CALLBACK(on_stars_brighter), NULL);
-    gtk_box_append(GTK_BOX(star_btn_box), btn_brighter);
+    gtk_box_append(GTK_BOX(box_stars), gtk_label_new("Spot M0:"));
+    range_m0 = GTK_RANGE(gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 20.0, 0.1));
+    gtk_scale_set_draw_value(GTK_SCALE(range_m0), TRUE); gtk_range_set_value(range_m0, sky_options.star_size_m0);
+    g_signal_connect(range_m0, "value-changed", G_CALLBACK(on_m0_changed), NULL);
+    gtk_box_append(GTK_BOX(box_stars), GTK_WIDGET(range_m0));
 
-    GtkWidget *btn_dimmer = gtk_button_new_with_label("Dimmer");
-    g_signal_connect(btn_dimmer, "clicked", G_CALLBACK(on_stars_dimmer), NULL);
-    gtk_box_append(GTK_BOX(star_btn_box), btn_dimmer);
+    gtk_box_append(GTK_BOX(box_stars), gtk_label_new("Spot MA:"));
+    range_ma = GTK_RANGE(gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.1, 5.0, 0.1));
+    gtk_scale_set_draw_value(GTK_SCALE(range_ma), TRUE); gtk_range_set_value(range_ma, sky_options.star_size_ma);
+    g_signal_connect(range_ma, "value-changed", G_CALLBACK(on_ma_changed), NULL);
+    gtk_box_append(GTK_BOX(box_stars), GTK_WIDGET(range_ma));
 
-    GtkWidget *btn_star_reset = gtk_button_new_with_label("Reset");
-    g_signal_connect(btn_star_reset, "clicked", G_CALLBACK(on_stars_reset), NULL);
-    gtk_box_append(GTK_BOX(star_btn_box), btn_star_reset);
+    gtk_box_append(GTK_BOX(box_stars), gtk_label_new("Saturation:"));
+    range_sat = GTK_RANGE(gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 3.0, 0.1));
+    gtk_scale_set_draw_value(GTK_SCALE(range_sat), TRUE); gtk_range_set_value(range_sat, sky_options.star_saturation);
+    g_signal_connect(range_sat, "value-changed", G_CALLBACK(on_saturation_changed), NULL);
+    gtk_box_append(GTK_BOX(box_stars), GTK_WIDGET(range_sat));
 
-    // Mag Limit
-    gtk_box_append(GTK_BOX(star_box), gtk_label_new("Mag Limit:"));
-    GtkWidget *scale_limit = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 15.0, 0.1);
-    range_mag = GTK_RANGE(scale_limit);
-    gtk_scale_set_draw_value(GTK_SCALE(scale_limit), TRUE);
-    gtk_scale_set_value_pos(GTK_SCALE(scale_limit), GTK_POS_RIGHT);
-    gtk_range_set_value(GTK_RANGE(scale_limit), sky_options.star_mag_limit);
-    g_signal_connect(scale_limit, "value-changed", G_CALLBACK(on_mag_limit_changed), NULL);
-    gtk_widget_set_sensitive(scale_limit, !sky_options.auto_star_settings);
-    gtk_box_append(GTK_BOX(star_box), scale_limit);
+    gtk_widget_set_sensitive(GTK_WIDGET(range_mag), !sky_options.auto_star_settings);
+    gtk_widget_set_sensitive(GTK_WIDGET(range_m0), !sky_options.auto_star_settings);
+    gtk_widget_set_sensitive(GTK_WIDGET(range_ma), !sky_options.auto_star_settings);
 
-    // M0
-    gtk_box_append(GTK_BOX(star_box), gtk_label_new("Spot Size M0:"));
-    GtkWidget *scale_m0 = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 20.0, 0.1);
-    range_m0 = GTK_RANGE(scale_m0);
-    gtk_scale_set_draw_value(GTK_SCALE(scale_m0), TRUE);
-    gtk_scale_set_value_pos(GTK_SCALE(scale_m0), GTK_POS_RIGHT);
-    gtk_range_set_value(GTK_RANGE(scale_m0), sky_options.star_size_m0);
-    g_signal_connect(scale_m0, "value-changed", G_CALLBACK(on_m0_changed), NULL);
-    gtk_widget_set_sensitive(scale_m0, !sky_options.auto_star_settings);
-    gtk_box_append(GTK_BOX(star_box), scale_m0);
+    // Targets Menu (List Actions)
+    GtkWidget *mb_targets = gtk_menu_button_new();
+    gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_targets), "Targets");
+    GtkWidget *pop_targets = gtk_popover_new();
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb_targets), pop_targets);
+    gtk_box_append(GTK_BOX(toolbar), mb_targets);
 
-    // MA
-    gtk_box_append(GTK_BOX(star_box), gtk_label_new("Spot Size MA:"));
-    GtkWidget *scale_ma = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.1, 5.0, 0.1);
-    range_ma = GTK_RANGE(scale_ma);
-    gtk_scale_set_draw_value(GTK_SCALE(scale_ma), TRUE);
-    gtk_scale_set_value_pos(GTK_SCALE(scale_ma), GTK_POS_RIGHT);
-    gtk_range_set_value(GTK_RANGE(scale_ma), sky_options.star_size_ma);
-    g_signal_connect(scale_ma, "value-changed", G_CALLBACK(on_ma_changed), NULL);
-    gtk_widget_set_sensitive(scale_ma, !sky_options.auto_star_settings);
-    gtk_box_append(GTK_BOX(star_box), scale_ma);
+    GtkWidget *box_targets = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_popover_set_child(GTK_POPOVER(pop_targets), box_targets);
 
-    // Saturation
-    gtk_box_append(GTK_BOX(star_box), gtk_label_new("Color Saturation:"));
-    GtkWidget *scale_sat = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 3.0, 0.1);
-    range_sat = GTK_RANGE(scale_sat);
-    gtk_scale_set_draw_value(GTK_SCALE(scale_sat), TRUE);
-    gtk_scale_set_value_pos(GTK_SCALE(scale_sat), GTK_POS_RIGHT);
-    gtk_range_set_value(GTK_RANGE(scale_sat), sky_options.star_saturation);
-    g_signal_connect(scale_sat, "value-changed", G_CALLBACK(on_saturation_changed), NULL);
-    gtk_box_append(GTK_BOX(star_box), scale_sat);
+    btn = gtk_button_new_with_label("New List"); g_signal_connect(btn, "clicked", G_CALLBACK(on_new_list_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
+    btn = gtk_button_new_with_label("Save List"); g_signal_connect(btn, "clicked", G_CALLBACK(on_save_list_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
+    btn = gtk_button_new_with_label("Load List"); g_signal_connect(btn, "clicked", G_CALLBACK(on_load_list_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
+    btn = gtk_button_new_with_label("Copy Target"); g_signal_connect(btn, "clicked", G_CALLBACK(on_copy_targets_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
+    btn = gtk_button_new_with_label("Paste Target"); g_signal_connect(btn, "clicked", G_CALLBACK(on_paste_targets_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
+    btn = gtk_button_new_with_label("Delete Selected"); g_signal_connect(btn, "clicked", G_CALLBACK(on_delete_target_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
+    btn = gtk_button_new_with_label("Clear Selection"); g_signal_connect(btn, "clicked", G_CALLBACK(on_clear_selection_clicked), NULL); gtk_box_append(GTK_BOX(box_targets), btn);
 
-    // Font Size
-    GtkWidget *font_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_box_append(GTK_BOX(font_box), gtk_label_new("Font Size:"));
-    GtkWidget *btn_font_minus = gtk_button_new_with_label("-");
-    g_signal_connect(btn_font_minus, "clicked", G_CALLBACK(on_font_minus_clicked), NULL);
-    gtk_box_append(GTK_BOX(font_box), btn_font_minus);
-    GtkWidget *btn_font_plus = gtk_button_new_with_label("+");
-    g_signal_connect(btn_font_plus, "clicked", G_CALLBACK(on_font_plus_clicked), NULL);
-    gtk_box_append(GTK_BOX(font_box), btn_font_plus);
-    gtk_grid_attach(GTK_GRID(controls_grid), font_box, 0, 5, 2, 1);
+    // Settings Menu
+    GtkWidget *mb_settings = gtk_menu_button_new();
+    gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_settings), "Settings");
+    GtkWidget *pop_settings = gtk_popover_new();
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb_settings), pop_settings);
+    gtk_box_append(GTK_BOX(toolbar), mb_settings);
 
-    // Ephemeris UT Toggle
-    GtkWidget *cb_ut = gtk_check_button_new_with_label("Ephemeris in UT");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb_ut), sky_options.ephemeris_use_ut);
-    g_signal_connect(cb_ut, "toggled", G_CALLBACK(on_ephemeris_ut_toggled), NULL);
-    gtk_grid_attach(GTK_GRID(controls_grid), cb_ut, 0, 6, 2, 1);
+    GtkWidget *box_settings = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_popover_set_child(GTK_POPOVER(pop_settings), box_settings);
 
-    // Status Label
-    gtk_grid_attach(GTK_GRID(controls_grid), status_label, 0, 7, 2, 1);
+    cb = gtk_check_button_new_with_label("Ephemeris in UT");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), sky_options.ephemeris_use_ut);
+    g_signal_connect(cb, "toggled", G_CALLBACK(on_ephemeris_ut_toggled), NULL);
+    gtk_box_append(GTK_BOX(box_settings), cb);
 
-    // Target List Frame (Right Side of Bottom)
+    GtkWidget *hbox_font = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_append(GTK_BOX(box_settings), hbox_font);
+    gtk_box_append(GTK_BOX(hbox_font), gtk_label_new("Font Size:"));
+    btn = gtk_button_new_with_label("-"); g_signal_connect(btn, "clicked", G_CALLBACK(on_font_minus_clicked), NULL); gtk_box_append(GTK_BOX(hbox_font), btn);
+    btn = gtk_button_new_with_label("+"); g_signal_connect(btn, "clicked", G_CALLBACK(on_font_plus_clicked), NULL); gtk_box_append(GTK_BOX(hbox_font), btn);
+
+    // Spacer
+    GtkWidget *spacer = gtk_label_new("");
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(toolbar), spacer);
+
+    // Status Label (Move to toolbar right)
+    GtkWidget *status_label = gtk_label_new("Hover over graph");
+    gtk_box_append(GTK_BOX(toolbar), status_label);
+
+    // Main Area
+    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_vexpand(paned, TRUE);
+    gtk_box_append(GTK_BOX(vbox_root), paned);
+
+    // Left: Sky View
+    GtkWidget *sky_area = create_sky_view(&loc, &dt, &sky_options, on_sky_click);
+    gtk_widget_set_size_request(sky_area, 600, 600);
+    gtk_paned_set_start_child(GTK_PANED(paned), sky_area);
+    gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+
+    // Right: Paned Vertical
+    GtkWidget *right_paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+    gtk_paned_set_end_child(GTK_PANED(paned), right_paned);
+    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
+
+    // Top Right: Elevation
+    GtkWidget *elev_area = create_elevation_view(&loc, &dt, GTK_LABEL(status_label), on_time_selected_from_plot, on_elevation_hover);
+    gtk_widget_set_size_request(elev_area, -1, 200);
+    gtk_paned_set_start_child(GTK_PANED(right_paned), elev_area);
+    gtk_paned_set_resize_start_child(GTK_PANED(right_paned), TRUE);
+
+    // Bottom Right: Targets
     GtkWidget *targets_frame = gtk_frame_new("Targets");
-    gtk_widget_set_hexpand(targets_frame, TRUE);
-    gtk_paned_set_end_child(GTK_PANED(bottom_paned), targets_frame);
-    gtk_paned_set_resize_end_child(GTK_PANED(bottom_paned), TRUE);
-
-    GtkWidget *target_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_widget_set_margin_top(target_box, 5);
-    gtk_widget_set_margin_bottom(target_box, 5);
-    gtk_widget_set_margin_start(target_box, 5);
-    gtk_widget_set_margin_end(target_box, 5);
-    gtk_frame_set_child(GTK_FRAME(targets_frame), target_box);
-
-    // Target List Toolbar
-    GtkWidget *tb_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_box_append(GTK_BOX(target_box), tb_box);
-
-    GtkWidget *btn_new_list = gtk_button_new_with_label("New List");
-    g_signal_connect(btn_new_list, "clicked", G_CALLBACK(on_new_list_clicked), NULL);
-    gtk_box_append(GTK_BOX(tb_box), btn_new_list);
-
-    GtkWidget *btn_save_list = gtk_button_new_with_label("Save");
-    g_signal_connect(btn_save_list, "clicked", G_CALLBACK(on_save_list_clicked), NULL);
-    gtk_box_append(GTK_BOX(tb_box), btn_save_list);
-
-    GtkWidget *btn_load_list = gtk_button_new_with_label("Load");
-    g_signal_connect(btn_load_list, "clicked", G_CALLBACK(on_load_list_clicked), NULL);
-    gtk_box_append(GTK_BOX(tb_box), btn_load_list);
-
-    GtkWidget *btn_copy = gtk_button_new_with_label("Copy");
-    g_signal_connect(btn_copy, "clicked", G_CALLBACK(on_copy_targets_clicked), NULL);
-    gtk_box_append(GTK_BOX(tb_box), btn_copy);
-
-    GtkWidget *btn_paste = gtk_button_new_with_label("Paste");
-    g_signal_connect(btn_paste, "clicked", G_CALLBACK(on_paste_targets_clicked), NULL);
-    gtk_box_append(GTK_BOX(tb_box), btn_paste);
-
     target_notebook = GTK_NOTEBOOK(gtk_notebook_new());
     gtk_notebook_set_tab_pos(target_notebook, GTK_POS_TOP);
-    gtk_widget_set_vexpand(GTK_WIDGET(target_notebook), TRUE);
     g_signal_connect(target_notebook, "switch-page", G_CALLBACK(on_notebook_switch_page), NULL);
-    gtk_box_append(GTK_BOX(target_box), GTK_WIDGET(target_notebook));
+    gtk_frame_set_child(GTK_FRAME(targets_frame), GTK_WIDGET(target_notebook));
 
-    GtkWidget *btn_del_target = gtk_button_new_with_label("Delete Selected Target");
-    g_signal_connect(btn_del_target, "clicked", G_CALLBACK(on_delete_target_clicked), NULL);
-    gtk_box_append(GTK_BOX(target_box), btn_del_target);
-
-    GtkWidget *btn_clear_sel = gtk_button_new_with_label("Clear Selection");
-    g_signal_connect(btn_clear_sel, "clicked", G_CALLBACK(on_clear_selection_clicked), NULL);
-    gtk_box_append(GTK_BOX(target_box), btn_clear_sel);
+    gtk_paned_set_end_child(GTK_PANED(right_paned), targets_frame);
+    gtk_paned_set_resize_end_child(GTK_PANED(right_paned), TRUE);
 
     refresh_tabs();
 
