@@ -60,7 +60,7 @@ static GtkRange *range_mag = NULL;
 static GtkRange *range_m0 = NULL;
 static GtkRange *range_ma = NULL;
 static GtkRange *range_sat = NULL;
-static GtkButton *btn_date_main = NULL;
+static GtkMenuButton *btn_date_main = NULL;
 
 // TargetObject Definition for ListModel
 #define TYPE_TARGET_OBJECT (target_object_get_type())
@@ -820,7 +820,7 @@ static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
 
         if (btn_date_main) {
             char *date_str = g_date_time_format(date, "%Y-%m-%d");
-            gtk_button_set_label(btn_date_main, date_str);
+            gtk_menu_button_set_label(btn_date_main, date_str);
             g_free(date_str);
         }
 
@@ -906,18 +906,17 @@ static void activate(GtkApplication *app, gpointer user_data) {
     // Date Button
     char date_buf[32];
     sprintf(date_buf, "%04d-%02d-%02d", dt.year, dt.month, dt.day);
-    btn_date_main = GTK_BUTTON(gtk_button_new_with_label(date_buf));
+
     GtkWidget *popover_cal = gtk_popover_new();
     GtkWidget *calendar = gtk_calendar_new();
     g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), NULL);
     gtk_popover_set_child(GTK_POPOVER(popover_cal), calendar);
-    gtk_menu_button_set_popover(GTK_MENU_BUTTON(btn_date_main), popover_cal); // Button as menu button? No, wrap in MenuButton or use popover on click?
-    // GTK4 Button doesn't have set_popover. MenuButton does.
-    // Replace with MenuButton.
+
     GtkWidget *mb_date = gtk_menu_button_new();
     gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_date), date_buf);
     gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb_date), popover_cal);
-    btn_date_main = GTK_BUTTON(mb_date); // Store reference to update label (it acts as button)
+
+    btn_date_main = GTK_MENU_BUTTON(mb_date);
     gtk_box_append(GTK_BOX(toolbar), mb_date);
 
     // View Menu
