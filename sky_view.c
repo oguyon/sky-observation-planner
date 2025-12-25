@@ -952,11 +952,12 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
             snprintf(buf_header, 64, "Ephemeris (Local UTC%+.1f)", tz);
         }
 
-        EphemEvent events[6];
+        EphemEvent events[10];
         int ev_count = 0;
 
         // Solar
         ln_get_solar_rst_horizon(jd_noon, &observer, horizon, &rst);
+        double sun_set_today = (rst.set > 0) ? rst.set : -1.0;
 
         // Sunset (rst.set)
         events[ev_count].jd = (rst.set > 0) ? rst.set : 999999999.0;
@@ -970,7 +971,22 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         format_time_only((rst.rise > 0) ? rst.rise : -1, tz, events[ev_count].time_str, 16);
         ev_count++;
 
+        // Night Mid (Sun) calculation
+        // Need next day's sunrise
+        struct ln_rst_time rst_next;
+        ln_get_solar_rst_horizon(jd_noon + 1.0, &observer, horizon, &rst_next);
+        double sun_rise_tomorrow = (rst_next.rise > 0) ? rst_next.rise : -1.0;
+
+        if (sun_set_today > 0 && sun_rise_tomorrow > 0) {
+            double mid_sun = (sun_set_today + sun_rise_tomorrow) / 2.0;
+            events[ev_count].jd = mid_sun;
+            strcpy(events[ev_count].label, "Night Mid (Sun)");
+            format_time_only(mid_sun, tz, events[ev_count].time_str, 16);
+            ev_count++;
+        }
+
         ln_get_solar_rst_horizon(jd_noon, &observer, -18.0, &rst);
+        double twi_end_today = (rst.set > 0) ? rst.set : -1.0;
 
         // Astro Tw. Start (rst.rise)
         events[ev_count].jd = (rst.rise > 0) ? rst.rise : 999999999.0;
@@ -983,6 +999,18 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
         strcpy(events[ev_count].label, "Astro Tw. End");
         format_time_only((rst.set > 0) ? rst.set : -1, tz, events[ev_count].time_str, 16);
         ev_count++;
+
+        // Night Mid (Twil) calculation
+        ln_get_solar_rst_horizon(jd_noon + 1.0, &observer, -18.0, &rst_next);
+        double twi_start_tomorrow = (rst_next.rise > 0) ? rst_next.rise : -1.0;
+
+        if (twi_end_today > 0 && twi_start_tomorrow > 0) {
+            double mid_twi = (twi_end_today + twi_start_tomorrow) / 2.0;
+            events[ev_count].jd = mid_twi;
+            strcpy(events[ev_count].label, "Night Mid (Twil)");
+            format_time_only(mid_twi, tz, events[ev_count].time_str, 16);
+            ev_count++;
+        }
 
         // Lunar
         ln_get_lunar_rst(jd_noon, &observer, &rst);
@@ -1001,8 +1029,8 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
         qsort(events, ev_count, sizeof(EphemEvent), compare_ephem_events);
 
-        char lines_buf[8][64];
-        const char *lines_ptr[8];
+        char lines_buf[12][64];
+        const char *lines_ptr[12];
 
         lines_ptr[0] = buf_header;
 
