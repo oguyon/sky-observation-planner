@@ -781,20 +781,6 @@ static void on_stars_dimmer(GtkButton *btn, gpointer user_data) {
     sky_view_redraw();
 }
 
-static void on_stars_reset(GtkButton *btn, gpointer user_data) {
-    // Defaults
-    sky_options.star_mag_limit = 8.0;
-    sky_options.star_size_m0 = 7.0;
-    sky_options.star_size_ma = 0.4;
-
-    // Update UI
-    if (range_mag) gtk_range_set_value(range_mag, sky_options.star_mag_limit);
-    if (range_m0) gtk_range_set_value(range_m0, sky_options.star_size_m0);
-    if (range_ma) gtk_range_set_value(range_ma, sky_options.star_size_ma);
-
-    sky_view_redraw();
-}
-
 static void on_site_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
     GtkDropDown *dropdown = GTK_DROP_DOWN(object);
     guint selected = gtk_drop_down_get_selected(dropdown);
@@ -865,9 +851,6 @@ static void on_time_current_clicked(GtkButton *btn, gpointer user_data) {
     // We want to set dt to "Now" in the Site's timezone.
     // dt.timezone_offset is set.
     // time(NULL) is UTC (epoch).
-
-    // Get UTC struct
-    struct tm *tm_utc = gmtime(&t);
 
     // Add timezone offset (hours)
     time_t t_local = t + (int)(dt.timezone_offset * 3600.0);
