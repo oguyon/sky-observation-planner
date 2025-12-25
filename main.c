@@ -808,6 +808,14 @@ static void on_site_changed(GObject *object, GParamSpec *pspec, gpointer user_da
     }
 }
 
+static void update_date_label() {
+    if (btn_date_main) {
+        char date_buf[32];
+        sprintf(date_buf, "%04d-%02d-%02d", dt.year, dt.month, dt.day);
+        gtk_menu_button_set_label(btn_date_main, date_buf);
+    }
+}
+
 static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
     GDateTime *date = gtk_calendar_get_date(calendar);
     if (date) {
@@ -818,15 +826,62 @@ static void on_day_selected(GtkCalendar *calendar, gpointer user_data) {
         dt.minute = 0;
         dt.second = 0;
 
-        if (btn_date_main) {
-            char *date_str = g_date_time_format(date, "%Y-%m-%d");
-            gtk_menu_button_set_label(btn_date_main, date_str);
-            g_free(date_str);
-        }
+        update_date_label();
 
         g_date_time_unref(date);
         update_all_views();
     }
+}
+
+static void on_time_adjust_clicked(GtkButton *btn, gpointer user_data) {
+    int minutes = (int)(intptr_t)user_data;
+
+    // Simple rollover logic
+    struct tm t = {0};
+    t.tm_year = dt.year - 1900;
+    t.tm_mon = dt.month - 1;
+    t.tm_mday = dt.day;
+    t.tm_hour = dt.hour;
+    t.tm_min = dt.minute;
+    t.tm_sec = (int)dt.second;
+    t.tm_isdst = -1;
+
+    t.tm_min += minutes;
+    mktime(&t); // Normalize
+
+    dt.year = t.tm_year + 1900;
+    dt.month = t.tm_mon + 1;
+    dt.day = t.tm_mday;
+    dt.hour = t.tm_hour;
+    dt.minute = t.tm_min;
+    dt.second = t.tm_sec;
+
+    update_date_label();
+    update_all_views();
+}
+
+static void on_time_current_clicked(GtkButton *btn, gpointer user_data) {
+    time_t t = time(NULL);
+    // We want to set dt to "Now" in the Site's timezone.
+    // dt.timezone_offset is set.
+    // time(NULL) is UTC (epoch).
+
+    // Get UTC struct
+    struct tm *tm_utc = gmtime(&t);
+
+    // Add timezone offset (hours)
+    time_t t_local = t + (int)(dt.timezone_offset * 3600.0);
+    struct tm *tm_loc = gmtime(&t_local); // treat as UTC to get fields
+
+    dt.year = tm_loc->tm_year + 1900;
+    dt.month = tm_loc->tm_mon + 1;
+    dt.day = tm_loc->tm_mday;
+    dt.hour = tm_loc->tm_hour;
+    dt.minute = tm_loc->tm_min;
+    dt.second = tm_loc->tm_sec;
+
+    update_date_label();
+    update_all_views();
 }
 
 static void on_mag_limit_changed(GtkRange *range, gpointer user_data) {
@@ -908,9 +963,35 @@ static void activate(GtkApplication *app, gpointer user_data) {
     sprintf(date_buf, "%04d-%02d-%02d", dt.year, dt.month, dt.day);
 
     GtkWidget *popover_cal = gtk_popover_new();
+    GtkWidget *box_cal = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_popover_set_child(GTK_POPOVER(popover_cal), box_cal);
+
     GtkWidget *calendar = gtk_calendar_new();
     g_signal_connect(calendar, "day-selected", G_CALLBACK(on_day_selected), NULL);
-    gtk_popover_set_child(GTK_POPOVER(popover_cal), calendar);
+    gtk_box_append(GTK_BOX(box_cal), calendar);
+
+    GtkWidget *box_time_btns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_box_append(GTK_BOX(box_cal), box_time_btns);
+
+    GtkWidget *btn_m3 = gtk_button_new_with_label("-3h");
+    g_signal_connect(btn_m3, "clicked", G_CALLBACK(on_time_adjust_clicked), (gpointer)-180);
+    gtk_box_append(GTK_BOX(box_time_btns), btn_m3);
+
+    GtkWidget *btn_m1 = gtk_button_new_with_label("-1h");
+    g_signal_connect(btn_m1, "clicked", G_CALLBACK(on_time_adjust_clicked), (gpointer)-60);
+    gtk_box_append(GTK_BOX(box_time_btns), btn_m1);
+
+    GtkWidget *btn_cur = gtk_button_new_with_label("Now");
+    g_signal_connect(btn_cur, "clicked", G_CALLBACK(on_time_current_clicked), NULL);
+    gtk_box_append(GTK_BOX(box_time_btns), btn_cur);
+
+    GtkWidget *btn_p1 = gtk_button_new_with_label("+1h");
+    g_signal_connect(btn_p1, "clicked", G_CALLBACK(on_time_adjust_clicked), (gpointer)60);
+    gtk_box_append(GTK_BOX(box_time_btns), btn_p1);
+
+    GtkWidget *btn_p3 = gtk_button_new_with_label("+3h");
+    g_signal_connect(btn_p3, "clicked", G_CALLBACK(on_time_adjust_clicked), (gpointer)180);
+    gtk_box_append(GTK_BOX(box_time_btns), btn_p3);
 
     GtkWidget *mb_date = gtk_menu_button_new();
     gtk_menu_button_set_label(GTK_MENU_BUTTON(mb_date), date_buf);
